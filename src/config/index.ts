@@ -176,6 +176,7 @@ export default {
   port: env.PORT,
   bcrypt_salt_rounds: env.BCRYPT_SALT_ROUNDS,
   cors_origin: corsOrigins,
+  api_public_url: env.API_PUBLIC_URL.replace(/\/$/, ''),
   branding: { projectName: env.PROJECT_NAME, logoUrl: env.BRAND_LOGO },
   jwt: {
     jwt_secret: env.JWT_SECRET,

@@ -48,6 +48,16 @@ export const getS3KeyFromUrl = (url: string): string | undefined => {
 export const isManagedS3Url = (url: string): boolean =>
   Boolean(getS3KeyFromUrl(url));
 
+const isMockAws = (): boolean => {
+  const key = config.aws.accessKeyId || '';
+  return (
+    !key ||
+    key.startsWith('mock_') ||
+    key.includes('replace-me') ||
+    (config.aws.bucketName || '').includes('replace-me')
+  );
+};
+
 export const uploadToS3 = async (
   file: Express.Multer.File,
   folder: string = 'products',
@@ -56,6 +66,23 @@ export const uploadToS3 = async (
     .basename(file.originalname)
     .replace(/[^a-zA-Z0-9._-]/g, '-');
   const fileName = `${folder}/${Date.now()}-${crypto.randomUUID()}-${safeOriginalName}`;
+
+  // If running locally without real AWS credentials, store files in local uploads directory
+  if (isMockAws()) {
+    const targetPath = path.join(process.cwd(), 'uploads', fileName);
+    const targetDir = path.dirname(targetPath);
+    if (!fs.existsSync(targetDir)) {
+      await fs.promises.mkdir(targetDir, { recursive: true });
+    }
+    const hasBuffer = Buffer.isBuffer(file.buffer) && file.buffer.length > 0;
+    if (hasBuffer) {
+      await fs.promises.writeFile(targetPath, file.buffer);
+    } else {
+      await fs.promises.copyFile(file.path, targetPath);
+    }
+    return `${config.api_public_url}/uploads/${fileName}`;
+  }
+
   const hasBuffer = Buffer.isBuffer(file.buffer) && file.buffer.length > 0;
   const contentLength = hasBuffer
     ? file.buffer.length
@@ -79,15 +106,33 @@ export const uploadToS3 = async (
   await s3Client.send(command);
 
   // Return CloudFront URL if available, else S3 URL
-  if (config.aws.cloudfrontDomain) {
+  if (
+    config.aws.cloudfrontDomain &&
+    !config.aws.cloudfrontDomain.includes('example.com')
+  ) {
     return `${config.aws.cloudfrontDomain.replace(/\/$/, '')}/${fileName}`;
   }
   return `https://${config.aws.bucketName}.s3.${config.aws.region}.amazonaws.com/${fileName}`;
 };
 
 export const deleteFromS3 = async (url: string): Promise<void> => {
+  if (url.includes('/uploads/')) {
+    try {
+      const relativePath = url.split('/uploads/')[1];
+      if (relativePath) {
+        const localPath = path.join(process.cwd(), 'uploads', relativePath);
+        if (fs.existsSync(localPath)) {
+          await fs.promises.unlink(localPath);
+        }
+      }
+    } catch {
+      // Ignore local cleanup errors
+    }
+    return;
+  }
+
   const key = getS3KeyFromUrl(url);
-  if (!key) return;
+  if (!key || isMockAws()) return;
 
   const deleteParams = {
     Bucket: config.aws.bucketName as string,
@@ -97,3 +142,4 @@ export const deleteFromS3 = async (url: string): Promise<void> => {
   const command = new DeleteObjectCommand(deleteParams);
   await s3Client.send(command);
 };
+

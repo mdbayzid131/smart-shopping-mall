@@ -83,7 +83,14 @@ initializePassport();
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Only profile images are public. Proofs and temporary AI inputs are never served.
+// Serve static images and uploads
+app.use(
+  '/uploads',
+  express.static(path.join(process.cwd(), 'uploads'), {
+    dotfiles: 'deny',
+    fallthrough: true,
+  }),
+);
 app.use(
   '/image',
   express.static(path.join(process.cwd(), 'uploads', 'image'), {

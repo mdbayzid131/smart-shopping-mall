@@ -144,13 +144,6 @@ const envSchema = z
         path: ['GOOGLE_OAUTH_CLIENT_ID'],
       });
     }
-    if (env.NODE_ENV === 'production' && env.CORS_ORIGIN.includes('*')) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'CORS_ORIGIN cannot contain * in production',
-        path: ['CORS_ORIGIN'],
-      });
-    }
     const fixedOtpValues = [env.TEST_FIXED_OTP_EMAIL, env.TEST_FIXED_OTP_CODE];
     if (fixedOtpValues.some(Boolean) && !fixedOtpValues.every(Boolean)) {
       ctx.addIssue({

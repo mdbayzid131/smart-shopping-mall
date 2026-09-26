@@ -34,7 +34,11 @@ app.use(
   cors({
     credentials: true,
     origin(origin, callback) {
-      if (!origin || config.cors_origin.includes(origin)) {
+      if (
+        !origin ||
+        config.cors_origin.includes('*') ||
+        config.cors_origin.includes(origin)
+      ) {
         callback(null, true);
         return;
       }

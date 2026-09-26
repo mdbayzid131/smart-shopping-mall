@@ -5,7 +5,8 @@ import { ORDER_OUTCOME } from '../../../enums/order';
 const createIssueZodSchema = z.object({
   body: z
     .object({
-      productId: z.string({ required_error: 'Product ID is required' }),
+      productId: z.string().optional(),
+      orderId: z.string().optional(),
       issueType: z.nativeEnum(ISSUE_TYPE, {
         required_error: 'Issue type is required',
       }),
@@ -14,6 +15,7 @@ const createIssueZodSchema = z.object({
       }),
       reason: z.string().trim().min(1).max(1000).optional(),
     })
+
     .superRefine((value, context) => {
       const validOutcomes: Record<ISSUE_TYPE, ORDER_OUTCOME[]> = {
         [ISSUE_TYPE.VERIFICATION_FAILED]: [

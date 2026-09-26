@@ -8,11 +8,12 @@ const STATUS_RANK: Record<ORDER_STATUS, number> = {
   [ORDER_STATUS.SECURED]: 1,
   [ORDER_STATUS.COLLECTION_PENDING]: 1,
   [ORDER_STATUS.COLLECTED]: 2,
-  [ORDER_STATUS.VERIFICATION]: 2,
+  [ORDER_STATUS.VERIFICATION]: 3,
   [ORDER_STATUS.PAYOUT_PROCESSING]: 3,
   [ORDER_STATUS.READY_FOR_DELIVERY]: 3,
-  [ORDER_STATUS.DELIVERED]: 4,
-  [ORDER_STATUS.COMPLETED]: 4,
+  [ORDER_STATUS.DISPATCHED]: 4,
+  [ORDER_STATUS.DELIVERED]: 5,
+  [ORDER_STATUS.COMPLETED]: 5,
   [ORDER_STATUS.REFUNDED]: -1,
   [ORDER_STATUS.CANCELLED]: -1,
 };
@@ -49,6 +50,10 @@ const CURRENT_PROGRESS: Record<
     label: 'Ready for delivery',
     description: 'The verified item is ready to be delivered',
   },
+  [ORDER_STATUS.DISPATCHED]: {
+    label: 'Dispatched',
+    description: 'The item has been dispatched and is in transit to buyer',
+  },
   [ORDER_STATUS.DELIVERED]: {
     label: 'Delivered',
     description: 'The item was delivered to the buyer',
@@ -83,13 +88,17 @@ const currentStepFor = (status: ORDER_STATUS) => {
   if (status === ORDER_STATUS.COLLECTED) return 'collected';
   if (
     status === ORDER_STATUS.VERIFICATION ||
-    status === ORDER_STATUS.PAYOUT_PROCESSING
+    status === ORDER_STATUS.PAYOUT_PROCESSING ||
+    status === ORDER_STATUS.READY_FOR_DELIVERY
   ) {
-    return 'verified';
+    return 'authenticated';
+  }
+  if (status === ORDER_STATUS.DISPATCHED) {
+    return 'dispatched';
   }
   if (
-    status === ORDER_STATUS.READY_FOR_DELIVERY ||
-    status === ORDER_STATUS.DELIVERED
+    status === ORDER_STATUS.DELIVERED ||
+    status === ORDER_STATUS.COMPLETED
   ) {
     return 'delivered';
   }
@@ -98,30 +107,48 @@ const currentStepFor = (status: ORDER_STATUS) => {
 
 export const getOrderProgress = (
   status: ORDER_STATUS,
-  statusHistory: Array<{ status: ORDER_STATUS }> = [],
+  statusHistory: Array<{ status: ORDER_STATUS; note?: string }> = [],
 ) => {
   const effectiveRank = Math.max(
-    STATUS_RANK[status],
+    STATUS_RANK[status] ?? -1,
     ...statusHistory.map(item => STATUS_RANK[item.status] ?? -1),
   );
+  const isCancelledOrRefunded =
+    status === ORDER_STATUS.CANCELLED || status === ORDER_STATUS.REFUNDED;
+
   const currentStep = currentStepFor(status);
   const steps = [
     { key: 'reserved', label: 'Reserved', rank: 1 },
     { key: 'collected', label: 'Collected', rank: 2 },
-    { key: 'verified', label: 'Verified', rank: 3 },
-    { key: 'delivered', label: 'Delivered', rank: 4 },
+    { key: 'authenticated', label: 'Authenticated', rank: 3 },
+    { key: 'dispatched', label: 'Dispatched', rank: 4 },
+    { key: 'delivered', label: 'Delivered', rank: 5 },
   ];
 
-  return steps.map(step => ({
-    key: step.key,
-    label: step.label,
-    state:
-      currentStep === step.key
-        ? 'current'
-        : effectiveRank >= step.rank
-          ? 'completed'
-          : 'pending',
-  }));
+  return steps.map(step => {
+    let state = 'pending';
+    if (!isCancelledOrRefunded) {
+      state =
+        currentStep === step.key
+          ? 'current'
+          : effectiveRank >= step.rank
+            ? 'completed'
+            : 'pending';
+    } else {
+      if (effectiveRank > step.rank) {
+        state = 'completed';
+      } else if (effectiveRank === step.rank) {
+        state = 'failed';
+      } else {
+        state = 'cancelled';
+      }
+    }
+    return {
+      key: step.key,
+      label: step.label,
+      state,
+    };
+  });
 };
 
 export const getVerificationState = (
@@ -171,7 +198,8 @@ export const getDeliveryState = (status: ORDER_STATUS) => {
 };
 
 const normalizeParty = (party: any, fallback: any = {}) => {
-  const value = toPlain(party) ?? {};
+  if (!party) return null;
+  const value = toPlain(party);
   return {
     _id: idOf(value),
     name: value.name ?? null,
@@ -179,56 +207,55 @@ const normalizeParty = (party: any, fallback: any = {}) => {
     phone: value.phone || value.contact || fallback.phone || null,
     location: value.location || fallback.location || null,
     country: value.country ?? null,
-    profileImage: value.avatar || value.image || null,
+    profileImage: value.avatar || value.image || value.profileImage || null,
   };
 };
 
 export const buildOrderDetails = ({
   order,
   openIssue,
-  viewer,
-  currency,
+  currency = 'AED',
 }: {
   order: any;
-  openIssue: any;
-  viewer: { id: string; role: string };
-  currency: string;
+  openIssue?: any;
+  viewer?: { id: string; role: string };
+  currency?: string;
 }) => {
   const value = toPlain(order);
   const product = toPlain(value.product) ?? {};
   const deliveryDetails = value.deliveryDetails ?? {};
-  const issue = toPlain(openIssue);
-  const hasOpenIssue = Boolean(issue && issue.resolved === false);
-  const status = value.status as ORDER_STATUS;
-  const isAdmin =
-    viewer.role === USER_ROLES.ADMIN || viewer.role === USER_ROLES.SUPER_ADMIN;
-  const isBuyer = idOf(value.buyer) === viewer.id;
-  const allowedStatusTransitions = isAdmin
-    ? ORDER_STATUS_TRANSITIONS[status] ?? []
+  const rawStatus = value.status;
+  const status = rawStatus === 'secured' ? 'reserved' : rawStatus;
+  const statusHistory = Array.isArray(value.statusHistory)
+    ? value.statusHistory.map((h: any) => ({
+        status: h.status === 'secured' ? 'reserved' : h.status,
+        note: h.note || null,
+        changedAt: h.changedAt,
+      }))
     : [];
-  const verification = getVerificationState(
-    status,
-    issue?.issueType === 'verification_failed' ||
-      value.outcome === ORDER_OUTCOME.AUTHENTICATION_FAILED ||
-      value.outcome === ORDER_OUTCOME.COUNTERFEIT,
-    value.outcome === ORDER_OUTCOME.NOT_AS_DESCRIBED ||
-      value.outcome === ORDER_OUTCOME.CONDITION_DIFFERS ||
-      value.outcome === ORDER_OUTCOME.BUYER_CHANGED_MIND ||
-      value.outcome === ORDER_OUTCOME.OTHERS,
-  );
-  const features = Array.isArray(product.features) ? product.features : [];
-  const hasProduct = Boolean(idOf(product));
-  const displayDetails = [product.material, ...features]
-    .filter(Boolean)
-    .join(' • ');
 
   return {
     _id: idOf(value),
     orderNumber: value.orderNumber,
     status,
+    outcome: value.outcome || null,
+    note: value.note || null,
+    cancellationReason:
+      value.cancellationReason || value.note || openIssue?.reason || null,
+    progress: getOrderProgress(value.status, value.statusHistory),
+    issue: openIssue
+      ? {
+          _id: idOf(openIssue),
+          reason: openIssue.reason,
+          issueType: openIssue.issueType,
+          outcome: openIssue.outcome,
+          resolved: Boolean(openIssue.resolved),
+          createdAt: openIssue.createdAt,
+        }
+      : null,
+    statusHistory,
     product: {
       _id: idOf(product),
-      orderId: product.orderId ?? null,
       name: product.name ?? null,
       brand: product.brand ?? null,
       images:
@@ -237,36 +264,16 @@ export const buildOrderDetails = ({
           : product.image
             ? [product.image]
             : [],
-      price: value.price,
-      currency,
-      verified: verification.isVerified,
-      details: {
-        material: product.material ?? null,
-        features,
-        condition: product.condition ?? null,
-        description: product.description ?? null,
-        originalPackagingAvailable: Boolean(
-          product.originalPackagingAvailable,
-        ),
-        displayText:
-          displayDetails || product.description || product.condition || null,
-      },
+      price: product.price ?? value.price,
+      currency: currency || 'AED',
+      verified: Boolean(product.verified),
+      condition: product.condition ?? product.details?.condition ?? null,
+      description: product.description ?? product.details?.description ?? null,
+      originalPackagingAvailable: Boolean(
+        product.originalPackagingAvailable ?? product.details?.originalPackagingAvailable ?? false,
+      ),
+      proofOfPurchase: product.proofOfPurchase ?? null,
     },
-    pricing: {
-      price: value.price,
-      platformFee: value.platformFee,
-      sellerPayout: value.sellerPayout,
-      currency,
-    },
-    verification,
-    pickupWindow:
-      value.pickupWindow?.start || value.pickupWindow?.end
-      ? {
-          start: value.pickupWindow.start ?? null,
-          end: value.pickupWindow.end ?? null,
-        }
-      : null,
-    estimatedDeliveryAt: value.estimatedDeliveryAt ?? null,
     seller: normalizeParty(value.seller),
     buyer: normalizeParty(value.buyer, deliveryDetails),
     deliveryDetails: {
@@ -274,92 +281,10 @@ export const buildOrderDetails = ({
       location: deliveryDetails.location ?? null,
       phone: deliveryDetails.phone ?? null,
     },
-    note: value.note ?? null,
-    progress: getOrderProgress(status, value.statusHistory ?? []),
-    currentProgress: {
-      status,
-      ...CURRENT_PROGRESS[status],
-    },
-    deliveryStatus: getDeliveryState(status),
-    statusHistory: (value.statusHistory ?? []).map((item: any) => ({
-      status: item.status,
-      note: item.note ?? null,
-      changedAt: item.changedAt,
-    })),
     payment: {
-      provider: value.payment?.provider ?? null,
-      status: value.payment?.status ?? null,
-    },
-    payoutStatus: value.payoutStatus,
-    policy: {
-      outcome: value.outcome ?? null,
-      refundAmount: value.refundAmount ?? null,
-      handlingFeeCharged: value.handlingFeeCharged ?? null,
-      returnShippingPayer: value.returnShippingPayer ?? null,
-      missedCollectionAttempts: Number(value.missedCollectionAttempts ?? 0),
-    },
-    issue: {
-      hasOpenIssue,
-      openIssue: hasOpenIssue
-        ? {
-            _id: idOf(issue),
-            issueType: issue.issueType,
-            outcome: issue.outcome ?? null,
-            reason: issue.reason,
-            createdAt: issue.createdAt,
-          }
-        : null,
-      canReport: isAdmin && hasProduct && !hasOpenIssue,
-    },
-    actions: {
-      allowedStatusTransitions,
-      markAsDelivered: {
-        enabled: allowedStatusTransitions.includes(ORDER_STATUS.DELIVERED),
-        requiredStatus: ORDER_STATUS.READY_FOR_DELIVERY,
-        disabledReason: allowedStatusTransitions.includes(ORDER_STATUS.DELIVERED)
-          ? null
-          : 'Order must be ready for delivery',
-        method: 'PATCH',
-        endpoint: `/api/v1/orders/${idOf(value)}/status`,
-        payload: { status: ORDER_STATUS.DELIVERED },
-      },
-      reportIssue: {
-        enabled: isAdmin && hasProduct && !hasOpenIssue,
-        disabledReason: !isAdmin
-          ? 'Admin access is required'
-          : !hasProduct
-            ? 'Product is no longer available'
-          : hasOpenIssue
-              ? 'An unresolved issue already exists'
-              : null,
-        method: 'POST',
-        endpoint: '/api/v1/issues',
-        payload: { productId: idOf(product) },
-      },
-      reportMissedCollection: {
-        enabled: isAdmin && status === ORDER_STATUS.COLLECTION_PENDING,
-        disabledReason: !isAdmin
-          ? 'Admin access is required'
-          : status !== ORDER_STATUS.COLLECTION_PENDING
-            ? 'Collection must be pending'
-            : null,
-        method: 'POST',
-        endpoint: `/api/v1/orders/${idOf(value)}/missed-collection`,
-      },
-      cancelOrder: {
-        enabled:
-          isBuyer &&
-          (status === ORDER_STATUS.PENDING_PAYMENT ||
-            status === ORDER_STATUS.SECURED),
-        disabledReason: !isBuyer
-          ? 'Only the buyer can cancel this order'
-          : status !== ORDER_STATUS.PENDING_PAYMENT &&
-              status !== ORDER_STATUS.SECURED
-            ? 'Order can only be cancelled before collection'
-            : null,
-        method: 'POST',
-        endpoint: `/api/v1/orders/${idOf(value)}/cancel`,
-      },
+      provider: value.payment?.provider ?? 'stripe',
+      status: value.payment?.status ?? 'paid',
+      payoutStatus: value.payoutStatus ?? 'pending',
     },
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,

@@ -17,6 +17,7 @@ import {
 import { NotificationEvent } from '../notification/notification.event';
 import { Wishlist } from '../wishlist/wishlist.model';
 import { OrderService } from '../order/order.service';
+import { UserPenaltyService } from '../user/user-penalty.service';
 import { ISSUE_TYPE } from '../../../enums/issue';
 
 const defaultIssueReason = (
@@ -43,63 +44,78 @@ const defaultIssueReason = (
 };
 
 const createIssue = async (
-  productId: string,
+  productId: string | undefined,
+  orderId: string | undefined,
   issueType: ISSUE_TYPE,
   outcome: ORDER_OUTCOME,
   reason: string | undefined,
   adminId: string,
 ) => {
+  let order: any = null;
+  if (orderId) {
+    order = await Order.findById(orderId);
+  }
+
+  const effectiveProductId =
+    productId || order?.product?._id?.toString() || order?.product?.toString();
+
+  if (!effectiveProductId && !order) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, 'Product ID or Order ID is required');
+  }
+
+  const product = effectiveProductId
+    ? await Product.findById(effectiveProductId)
+    : null;
+
+  if (!order && effectiveProductId) {
+    order = await Order.findOne({ product: effectiveProductId }).sort({ createdAt: -1 });
+  }
+
+  if (!product && !order) {
+    throw new ApiError(StatusCodes.NOT_FOUND, 'Product or Order not found');
+  }
+
+  // Prevent reporting issues on delivered, completed, or already refunded/cancelled orders
+  if (order) {
+    if (
+      order.status === ORDER_STATUS.DELIVERED ||
+      order.status === ORDER_STATUS.COMPLETED
+    ) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        'Cannot report an issue on an order that has already been delivered or completed',
+      );
+    }
+    if (
+      order.status === ORDER_STATUS.REFUNDED ||
+      order.status === ORDER_STATUS.CANCELLED
+    ) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        'Cannot report an issue on an order that is already cancelled or refunded',
+      );
+    }
+  }
+
   const effectiveReason =
     reason?.trim() || defaultIssueReason(issueType, outcome);
+
   // Check for existing unresolved issue for product
-  const existingIssue = await Issue.findOne({
-    product: productId,
-    resolved: false,
-  });
-  if (existingIssue && issueType !== ISSUE_TYPE.SELLER_UNAVAILABLE) {
-    throw new ApiError(
-      StatusCodes.BAD_REQUEST,
-      'An unresolved issue already exists for this product',
-    );
-  }
-
-  const product = await Product.findById(productId);
-  if (!product) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Product not found');
-  }
-
-  // Find associated order if any
-  let order = null;
-  if (product.buyer) {
-    order = await Order.findOne({
-      product: productId,
-      buyer: product.buyer,
-    }).sort({ createdAt: -1 });
+  if (effectiveProductId) {
+    const existingIssue = await Issue.findOne({
+      product: effectiveProductId,
+      resolved: false,
+    });
+    if (existingIssue && issueType !== ISSUE_TYPE.SELLER_UNAVAILABLE) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        'An unresolved issue already exists for this product',
+      );
+    }
   }
 
   let refunded = false;
-  let autoResolved = false;
-  if (issueType === ISSUE_TYPE.SELLER_UNAVAILABLE) {
-    if (!order) {
-      throw new ApiError(
-        StatusCodes.NOT_FOUND,
-        'No active order was found for this product',
-      );
-    }
-    const result = await OrderService.reportMissedCollection(
-      order._id.toString(),
-      adminId,
-      effectiveReason,
-    );
-    refunded = result.cancelled;
-    autoResolved = true;
-  } else if (issueType !== ISSUE_TYPE.OTHERS) {
-    if (!order) {
-      throw new ApiError(
-        StatusCodes.NOT_FOUND,
-        'No active order was found for this product',
-      );
-    }
+  if (order) {
     order = await OrderService.updateOrderStatus(
       order._id.toString(),
       ORDER_STATUS.REFUNDED,
@@ -109,26 +125,37 @@ const createIssue = async (
       false,
     );
     refunded = true;
+
+    if (issueType === ISSUE_TYPE.SELLER_UNAVAILABLE) {
+      const sellerIdStr =
+        order?.seller?._id?.toString() || order?.seller?.toString();
+      if (sellerIdStr) {
+        await UserPenaltyService.recordMissedCollection(sellerIdStr);
+      }
+    }
   }
+
+  const buyerId = order?.buyer?._id || order?.buyer || product?.buyer;
+  const sellerId = order?.seller?._id || order?.seller || product?.seller;
 
   // Create issue
   const issue = await Issue.create({
-    product: productId,
-    buyer: product.buyer,
-    seller: product.seller,
+    product: effectiveProductId || order?.product,
+    buyer: buyerId,
+    seller: sellerId,
     issueType,
     outcome,
     reason: effectiveReason,
     admin: adminId,
-    resolved: autoResolved,
+    resolved: false,
   });
 
   // Notify seller
-  const seller = await User.findById(product.seller);
+  const seller = sellerId ? await User.findById(sellerId) : null;
   if (seller && seller.email) {
     const emailData = emailTemplate.issueCreated({
       email: seller.email,
-      productName: product.name,
+      productName: product?.name || 'Item',
       issueType,
       reason: effectiveReason,
       refunded,
@@ -138,6 +165,7 @@ const createIssue = async (
 
   return issue;
 };
+
 
 const resolveIssue = async (
   issueId: string,
@@ -201,10 +229,10 @@ const resolveIssue = async (
     // Update product status and clear buyer
     await synchronizeProductStatusMutation(
       Product.findByIdAndUpdate(product._id, {
-        $set: { status: 'available' },
+        $set: { status: 'live' },
         $unset: { buyer: 1, reservationExpiresAt: 1 },
       }),
-      { productId: product._id.toString(), status: 'available' },
+      { productId: product._id.toString(), status: 'live' },
     );
     void NotificationEvent.wishlistAvailabilityChanged(
       product._id.toString(),

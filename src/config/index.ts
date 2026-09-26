@@ -1,6 +1,8 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { z } from 'zod';
+
 
 const environmentPath = path.join(process.cwd(), '.env');
 const environmentResult = dotenv.config({
@@ -25,11 +27,21 @@ const firebaseServiceAccountSchema = z.object({
 });
 
 const decodeFirebaseServiceAccount = (encodedValue?: string) => {
-  if (!encodedValue) return null;
+  if (!encodedValue?.trim()) return null;
 
   try {
-    const decodedValue = Buffer.from(encodedValue.trim(), 'base64').toString('utf8');
-    const parsedValue: unknown = JSON.parse(decodedValue);
+    let jsonString = encodedValue.trim();
+
+    // 1. If it's a file path that exists on disk
+    if (jsonString.endsWith('.json') && fs.existsSync(jsonString)) {
+      jsonString = fs.readFileSync(jsonString, 'utf8');
+    }
+    // 2. If it's not starting with '{', decode from base64
+    else if (!jsonString.startsWith('{')) {
+      jsonString = Buffer.from(jsonString, 'base64').toString('utf8');
+    }
+
+    const parsedValue: unknown = JSON.parse(jsonString);
     const serviceAccount = firebaseServiceAccountSchema.parse(parsedValue);
 
     return {
@@ -37,12 +49,14 @@ const decodeFirebaseServiceAccount = (encodedValue?: string) => {
       clientEmail: serviceAccount.client_email,
       privateKey: serviceAccount.private_key.replace(/\\n/g, '\n'),
     };
-  } catch {
+  } catch (error) {
+    console.error('Failed to parse Firebase service account:', error);
     throw new Error(
-      'Invalid environment configuration: FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 must contain a Base64-encoded Firebase service-account JSON file',
+      'Invalid environment configuration: FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 must contain a valid Firebase service-account JSON or Base64 string',
     );
   }
 };
+
 
 const envSchema = z
   .object({

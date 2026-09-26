@@ -47,11 +47,20 @@ const getProductContext = async (productId: string, fallbackPrice = 0) => {
   }
 };
 
-const orderData = (order: OrderNotificationContext) => ({
+const buyerOrderData = (order: OrderNotificationContext) => ({
   screen: 'order_details',
   orderId: idOf(order._id),
   orderNumber: order.orderNumber,
   productId: idOf(order.product),
+  role: 'buyer',
+});
+
+const sellerOrderData = (order: OrderNotificationContext) => ({
+  screen: 'seller_item_detail',
+  productId: idOf(order.product),
+  orderId: idOf(order._id),
+  orderNumber: order.orderNumber,
+  role: 'seller',
 });
 
 const notifyOrderParties = async (
@@ -61,30 +70,45 @@ const notifyOrderParties = async (
   body: string,
   eventKey: string,
 ) => {
-  const recipients = new Set([idOf(order.buyer), idOf(order.seller)]);
-  recipients.delete('');
-  await Promise.all(
-    [...recipients].map(recipientId =>
+  const buyerId = idOf(order.buyer);
+  const sellerId = idOf(order.seller);
+
+  const promises: Promise<any>[] = [];
+  if (buyerId) {
+    promises.push(
       NotificationService.safeCreateNotification({
-        recipientId,
+        recipientId: buyerId,
         type,
         title,
         body,
         eventKey,
-        data: orderData(order),
+        data: buyerOrderData(order),
       }),
-    ),
-  );
+    );
+  }
+  if (sellerId) {
+    promises.push(
+      NotificationService.safeCreateNotification({
+        recipientId: sellerId,
+        type,
+        title,
+        body,
+        eventKey,
+        data: sellerOrderData(order),
+      }),
+    );
+  }
+  await Promise.all(promises);
 };
 
 const itemListed = async (sellerId: string, productId: string) =>
   NotificationService.safeCreateNotification({
     recipientId: sellerId,
-    type: NOTIFICATION_TYPE.ITEM_LISTED,
-    title: 'Your item is now live',
-    body: 'Your listing is available for buyers to discover.',
-    eventKey: `product:${productId}:listed`,
-    data: { screen: 'product_details', productId },
+    type: NOTIFICATION_TYPE.ITEM_UNDER_REVIEW,
+    title: 'Item under review',
+    body: 'Your listing is under review by the Closeté team and will be published shortly.',
+    eventKey: `product:${productId}:under-review:${Date.now()}`,
+    data: { screen: 'my_listings', productId, status: 'pending_review' },
   });
 
 const paymentSucceeded = async (order: OrderNotificationContext) => {
@@ -101,7 +125,7 @@ const paymentSucceeded = async (order: OrderNotificationContext) => {
       title: 'Order confirmed',
       body: `You’ve secured the ${product.name} for ${displayPrice}. We’ll arrange collection and begin authentication once the item is received.`,
       eventKey: key,
-      data: orderData(order),
+      data: buyerOrderData(order),
     }),
     NotificationService.safeCreateNotification({
       recipientId: idOf(order.seller),
@@ -109,7 +133,7 @@ const paymentSucceeded = async (order: OrderNotificationContext) => {
       title: 'Your item has been reserved',
       body: `The ${product.name} has been purchased for ${displayPrice}. We’ll contact you shortly to arrange collection.`,
       eventKey: key,
-      data: orderData(order),
+      data: sellerOrderData(order),
     }),
   ]);
 };
@@ -123,7 +147,7 @@ const authenticationPassed = async (order: OrderNotificationContext) => {
       title: 'Authentication complete',
       body: 'Your item has been authenticated and is being prepared for delivery.',
       eventKey: key,
-      data: orderData(order),
+      data: buyerOrderData(order),
     }),
     NotificationService.safeCreateNotification({
       recipientId: idOf(order.seller),
@@ -131,7 +155,7 @@ const authenticationPassed = async (order: OrderNotificationContext) => {
       title: 'Authentication complete',
       body: 'Your item has successfully passed authentication and will now be prepared for delivery.',
       eventKey: key,
-      data: orderData(order),
+      data: sellerOrderData(order),
     }),
   ]);
 };
@@ -148,7 +172,7 @@ const authenticationFailed = async (
       title: 'Authentication unsuccessful',
       body: 'Unfortunately this item did not pass our authentication process. A full refund has been issued to your original payment method.',
       eventKey: key,
-      data: { ...orderData(order), outcome },
+      data: { ...buyerOrderData(order), outcome },
     }),
     NotificationService.safeCreateNotification({
       recipientId: idOf(order.seller),
@@ -156,7 +180,7 @@ const authenticationFailed = async (
       title: 'Authentication unsuccessful',
       body: 'Your item did not pass authentication and has been removed from Closete. Our team will contact you with the next steps.',
       eventKey: key,
-      data: { ...orderData(order), outcome },
+      data: { ...sellerOrderData(order), outcome },
     }),
   ]);
 };
@@ -171,7 +195,7 @@ const collectionMissed = async (
     title: 'Collection missed',
     body: 'We were unable to collect your item. Our team will contact you to arrange another collection time.',
     eventKey: `order:${idOf(order._id)}:collection-missed:${attempt}`,
-    data: { ...orderData(order), attempt: String(attempt) },
+    data: { ...sellerOrderData(order), attempt: String(attempt) },
   });
 
 const deliveryRejected = async (
@@ -220,7 +244,7 @@ const deliveryRejected = async (
       title: message.buyerTitle,
       body: message.buyerBody,
       eventKey: key,
-      data: { ...orderData(order), outcome },
+      data: { ...buyerOrderData(order), outcome },
     }),
     NotificationService.safeCreateNotification({
       recipientId: idOf(order.seller),
@@ -228,7 +252,7 @@ const deliveryRejected = async (
       title: 'Delivery cancelled',
       body: message.sellerBody,
       eventKey: key,
-      data: { ...orderData(order), outcome },
+      data: { ...sellerOrderData(order), outcome },
     }),
   ]);
 };
@@ -240,19 +264,75 @@ const paymentFailed = async (order: OrderNotificationContext) =>
     title: 'Payment failed',
     body: `Payment for order ${order.orderNumber} was unsuccessful.`,
     eventKey: `order:${idOf(order._id)}:payment-failed`,
-    data: orderData(order),
+    data: buyerOrderData(order),
   });
 
 const orderStatusChanged = async (
   order: OrderNotificationContext,
   status: ORDER_STATUS,
 ) => {
-  if (status === ORDER_STATUS.PAYOUT_PROCESSING) {
+  const product = await getProductContext(
+    idOf(order.product),
+    Number(order.price ?? 0),
+  );
+  const key = `order:${idOf(order._id)}:status:${status}`;
+
+  if (
+    status === ORDER_STATUS.VERIFICATION ||
+    status === ORDER_STATUS.PAYOUT_PROCESSING
+  ) {
     await authenticationPassed(order);
     return;
   }
+
+  if (status === ORDER_STATUS.COLLECTED) {
+    await Promise.all([
+      NotificationService.safeCreateNotification({
+        recipientId: idOf(order.buyer),
+        type: NOTIFICATION_TYPE.ITEM_COLLECTED,
+        title: 'Item collected',
+        body: `The ${product.name} has been picked up from the seller and is on its way to our authentication center.`,
+        eventKey: key,
+        data: buyerOrderData(order),
+      }),
+      NotificationService.safeCreateNotification({
+        recipientId: idOf(order.seller),
+        type: NOTIFICATION_TYPE.ITEM_COLLECTED,
+        title: 'Item collected',
+        body: `Your ${product.name} has been picked up by our courier and is heading to authentication.`,
+        eventKey: key,
+        data: sellerOrderData(order),
+      }),
+    ]);
+    return;
+  }
+
+  if (
+    status === ORDER_STATUS.DISPATCHED ||
+    status === ORDER_STATUS.READY_FOR_DELIVERY
+  ) {
+    await Promise.all([
+      NotificationService.safeCreateNotification({
+        recipientId: idOf(order.buyer),
+        type: NOTIFICATION_TYPE.ITEM_DISPATCHED,
+        title: 'Item dispatched',
+        body: `The ${product.name} is on its way to you for delivery.`,
+        eventKey: key,
+        data: buyerOrderData(order),
+      }),
+      NotificationService.safeCreateNotification({
+        recipientId: idOf(order.seller),
+        type: NOTIFICATION_TYPE.ITEM_DISPATCHED,
+        title: 'Item dispatched',
+        body: `The ${product.name} has been dispatched for delivery to the buyer.`,
+        eventKey: key,
+        data: sellerOrderData(order),
+      }),
+    ]);
+    return;
+  }
+
   if (status === ORDER_STATUS.DELIVERED) {
-    const key = `order:${idOf(order._id)}:status:${status}`;
     await Promise.all([
       NotificationService.safeCreateNotification({
         recipientId: idOf(order.buyer),
@@ -260,7 +340,7 @@ const orderStatusChanged = async (
         title: 'Delivered',
         body: 'We hope you enjoy your purchase. Thank you for choosing Closete.',
         eventKey: key,
-        data: orderData(order),
+        data: buyerOrderData(order),
       }),
       NotificationService.safeCreateNotification({
         recipientId: idOf(order.seller),
@@ -268,64 +348,37 @@ const orderStatusChanged = async (
         title: 'Delivery complete',
         body: 'Your item has been delivered successfully. Your payout will be processed shortly.',
         eventKey: key,
-        data: orderData(order),
+        data: sellerOrderData(order),
       }),
     ]);
     return;
   }
-  const statusMessage: Partial<
-    Record<ORDER_STATUS, [NOTIFICATION_TYPE, string, string]>
-  > = {
-    [ORDER_STATUS.SECURED]: [
-      NOTIFICATION_TYPE.ORDER_SECURED,
-      'Order secured',
-      `Order ${order.orderNumber} has been secured.`,
-    ],
-    [ORDER_STATUS.COLLECTION_PENDING]: [
-      NOTIFICATION_TYPE.COLLECTION_PENDING,
-      'Collection pending',
-      `Collection is being arranged for order ${order.orderNumber}.`,
-    ],
-    [ORDER_STATUS.COLLECTED]: [
-      NOTIFICATION_TYPE.ITEM_COLLECTED,
-      'Item collected',
-      `The item for order ${order.orderNumber} has been collected.`,
-    ],
-    [ORDER_STATUS.VERIFICATION]: [
-      NOTIFICATION_TYPE.ITEM_VERIFICATION,
-      'Item authentication in progress',
-      `The item for order ${order.orderNumber} is being authenticated.`,
-    ],
-    [ORDER_STATUS.READY_FOR_DELIVERY]: [
-      NOTIFICATION_TYPE.READY_FOR_DELIVERY,
-      'Ready for delivery',
-      `Order ${order.orderNumber} is ready for delivery.`,
-    ],
-    [ORDER_STATUS.COMPLETED]: [
-      NOTIFICATION_TYPE.ORDER_COMPLETED,
-      'Order completed',
-      `Order ${order.orderNumber} is complete.`,
-    ],
-    [ORDER_STATUS.REFUNDED]: [
+
+  if (status === ORDER_STATUS.COMPLETED) {
+    return;
+  }
+
+  if (status === ORDER_STATUS.REFUNDED) {
+    await notifyOrderParties(
+      order,
       NOTIFICATION_TYPE.PAYMENT_REFUNDED,
       'Payment refunded',
       `Payment for order ${order.orderNumber} has been refunded.`,
-    ],
-    [ORDER_STATUS.CANCELLED]: [
+      key,
+    );
+    return;
+  }
+
+  if (status === ORDER_STATUS.CANCELLED) {
+    await notifyOrderParties(
+      order,
       NOTIFICATION_TYPE.ORDER_CANCELLED,
       'Order cancelled',
       `Order ${order.orderNumber} has been cancelled.`,
-    ],
-  };
-  const message = statusMessage[status];
-  if (!message) return;
-  await notifyOrderParties(
-    order,
-    message[0],
-    message[1],
-    message[2],
-    `order:${idOf(order._id)}:status:${status}`,
-  );
+      key,
+    );
+    return;
+  }
 };
 
 const payoutPaid = async (order: OrderNotificationContext) =>
@@ -335,7 +388,7 @@ const payoutPaid = async (order: OrderNotificationContext) =>
     title: 'Payout released',
     body: 'Your funds are on their way to your nominated bank account.',
     eventKey: `order:${idOf(order._id)}:payout-paid`,
-    data: orderData(order),
+    data: sellerOrderData(order),
   });
 
 const orderScheduleUpdated = async (
@@ -471,6 +524,33 @@ const wishlistAvailabilityChanged = async (
   }
 };
 
+const itemApproved = async (
+  userId: string,
+  productId: string,
+) =>
+  NotificationService.safeCreateNotification({
+    recipientId: userId,
+    type: NOTIFICATION_TYPE.ITEM_LIVE,
+    title: '🎉 Your item is now live',
+    body: 'We’ve reviewed and published your listing. Minor edits may have been made to enhance your listing’s presentation and clarity.',
+    eventKey: `product:${productId}:live:${Date.now()}`,
+    data: { screen: 'my_listings', productId, status: 'live' },
+  });
+
+const itemRejected = async (
+  userId: string,
+  productId: string,
+  rejectionReason: string,
+) =>
+  NotificationService.safeCreateNotification({
+    recipientId: userId,
+    type: NOTIFICATION_TYPE.ITEM_REJECTED,
+    title: 'Your listing couldn’t be published',
+    body: `We’ve reviewed your listing and, unfortunately, we’re unable to publish it at this time. Reason: ${rejectionReason}`,
+    eventKey: `product:${productId}:rejected:${Date.now()}`,
+    data: { screen: 'my_listings', productId, status: 'rejected', rejectionReason },
+  });
+
 const sellerOnboardingRequired = async (userId: string) =>
   NotificationService.safeCreateNotification({
     recipientId: userId,
@@ -483,6 +563,8 @@ const sellerOnboardingRequired = async (userId: string) =>
 
 export const NotificationEvent = {
   itemListed,
+  itemApproved,
+  itemRejected,
   paymentSucceeded,
   paymentFailed,
   orderStatusChanged,

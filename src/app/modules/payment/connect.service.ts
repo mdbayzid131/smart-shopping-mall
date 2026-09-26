@@ -41,10 +41,14 @@ const throwConnectProviderError = (
     .join(' ');
 
   errorLogger.error(`[STRIPE_CONNECT] ${diagnostic}`);
-  throw new ApiError(
-    StatusCodes.SERVICE_UNAVAILABLE,
-    'Seller payout onboarding is currently unavailable',
-  );
+
+  const errorMessage =
+    typeof details?.message === 'string' &&
+    details.message.includes('signed up for Connect')
+      ? 'Stripe Connect is not enabled on this Stripe account. Please enable Connect in your Stripe Dashboard (https://dashboard.stripe.com/connect).'
+      : 'Seller payout onboarding is currently unavailable';
+
+  throw new ApiError(StatusCodes.SERVICE_UNAVAILABLE, errorMessage);
 };
 
 const stateSignature = (payload: string) =>
@@ -107,7 +111,15 @@ const accountStatus = async (userId: string) => {
   let account: Awaited<ReturnType<typeof retrieveConnectedAccount>>;
   try {
     account = await retrieveConnectedAccount(user.stripeAccountId);
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.code === 'resource_missing' || error?.statusCode === 404) {
+      return {
+        connected: false,
+        detailsSubmitted: false,
+        payoutsEnabled: false,
+        chargesEnabled: false,
+      };
+    }
     return throwConnectProviderError('retrieve account', error);
   }
   return {
@@ -144,6 +156,19 @@ const onboardingLink = async (userId: string) => {
 
   let accountId = user.stripeAccountId;
 
+  if (accountId) {
+    try {
+      const existingAccount = await retrieveConnectedAccount(accountId);
+      if (existingAccount.business_type !== 'individual') {
+        accountId = undefined;
+      }
+    } catch (error: any) {
+      if (error?.code === 'resource_missing' || error?.statusCode === 404) {
+        accountId = undefined;
+      }
+    }
+  }
+
   if (!accountId) {
     let account: Awaited<ReturnType<typeof createConnectedAccount>>;
     try {
@@ -151,36 +176,13 @@ const onboardingLink = async (userId: string) => {
     } catch (error) {
       return throwConnectProviderError('create account', error);
     }
-    const updatedUser = await User.findOneAndUpdate(
-      {
-        _id: userId,
-        status: 'active',
-        verified: true,
-        $or: [
-          { stripeAccountId: { $exists: false } },
-          { stripeAccountId: null },
-        ],
-      },
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
       { $set: { stripeAccountId: account.id } },
       { new: true },
     ).select('+stripeAccountId');
 
-    accountId = updatedUser?.stripeAccountId;
-    if (!accountId) {
-      const currentUser = await User.findOne({
-        _id: userId,
-        status: 'active',
-        verified: true,
-      }).select('+stripeAccountId');
-      accountId = currentUser?.stripeAccountId;
-    }
-
-    if (!accountId) {
-      throw new ApiError(
-        StatusCodes.INTERNAL_SERVER_ERROR,
-        'Unable to initialize seller payout account',
-      );
-    }
+    accountId = updatedUser?.stripeAccountId || account.id;
   }
 
   const state = createState(userId);

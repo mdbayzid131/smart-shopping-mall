@@ -16,13 +16,16 @@ import {
   createPaymentIntent,
   createRefund,
   reverseSellerTransfer,
+  stripeClient,
 } from '../../../integrations/stripe';
 import {
   createSellerTransfer,
   retrieveConnectedAccount,
 } from '../../../integrations/stripe';
+import { logger } from '../../../shared/logger';
 import QueryBuilder from '../../builder/QueryBuilder';
 import { Product } from '../product/product.model';
+import { invalidateProductCaches } from '../product/product-state-sync';
 import {
   ORDER_STATUS_TRANSITIONS,
   REFUND_TRIGGER_STATUSES,
@@ -72,7 +75,7 @@ const checkoutOrder = async (
     throw new ApiError(StatusCodes.NOT_FOUND, 'Product not found');
   }
 
-  if (product.status !== 'available') {
+  if (product.status !== 'live' && product.status !== 'available') {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
       'This item is no longer available',
@@ -97,18 +100,18 @@ const checkoutOrder = async (
     Product.findOneAndUpdate(
       {
         _id: product._id,
-        status: 'available',
+        status: { $in: ['live', 'available'] },
       },
       {
         $set: {
-          status: 'secured',
+          status: 'reserved',
           buyer: buyerId,
           reservationExpiresAt,
         },
       },
       { new: true },
     ),
-    { productId: product._id.toString(), status: 'secured' },
+    { productId: product._id.toString(), status: 'reserved' },
   );
   if (!reservedProduct) {
     throw new ApiError(StatusCodes.CONFLICT, 'This item is being purchased');
@@ -159,11 +162,11 @@ const checkoutOrder = async (
       Product.findOneAndUpdate(
         { _id: product._id, buyer: buyerId, reservationExpiresAt },
         {
-          $set: { status: 'available' },
+          $set: { status: 'live' },
           $unset: { buyer: 1, reservationExpiresAt: 1 },
         },
       ),
-      { productId: product._id.toString(), status: 'available' },
+      { productId: product._id.toString(), status: 'live' },
     );
     throw error;
   }
@@ -224,11 +227,11 @@ const handlePaymentSucceeded = async (payment: SuccessfulPayment) => {
       Product.findOneAndUpdate(
         { _id: expectedOrder.product, buyer: expectedOrder.buyer },
         {
-          $set: { status: 'available' },
+          $set: { status: 'live' },
           $unset: { buyer: 1, reservationExpiresAt: 1 },
         },
       ),
-      { productId: expectedOrder.product.toString(), status: 'available' },
+      { productId: expectedOrder.product.toString(), status: 'live' },
     );
     void NotificationEvent.orderStatusChanged(
       expectedOrder,
@@ -304,10 +307,10 @@ const handlePaymentSucceeded = async (payment: SuccessfulPayment) => {
 
   await synchronizeProductStatusMutation(
     Product.findByIdAndUpdate(order.product, {
-      $set: { status: 'secured', buyer: order.buyer },
+      $set: { status: 'reserved', buyer: order.buyer },
       $unset: { reservationExpiresAt: 1 },
     }),
-    { productId: order.product.toString(), status: 'secured' },
+    { productId: order.product.toString(), status: 'reserved' },
   );
   void NotificationEvent.paymentSucceeded(order);
   void NotificationEvent.wishlistAvailabilityChanged(
@@ -330,15 +333,118 @@ const handlePaymentFailed = async (paymentIntentId: string) => {
   await order.save();
   await synchronizeProductStatusMutation(
     Product.findOneAndUpdate(
-      { _id: order.product, buyer: order.buyer, status: 'secured' },
+      { _id: order.product, buyer: order.buyer, status: { $in: ['secured', 'reserved'] } },
       {
-        $set: { status: 'available' },
+        $set: { status: 'live' },
         $unset: { buyer: 1, reservationExpiresAt: 1 },
       },
     ),
-    { productId: order.product.toString(), status: 'available' },
+    { productId: order.product.toString(), status: 'live' },
   );
   void NotificationEvent.paymentFailed(order);
+};
+
+const reconcilePendingOrder = async (order: any) => {
+  if (
+    !order ||
+    order.status !== ORDER_STATUS.PENDING_PAYMENT ||
+    !order.payment?.paymentIntentId
+  ) {
+    return order;
+  }
+  try {
+    const paymentIntent = await stripeClient.paymentIntents.retrieve(
+      order.payment.paymentIntentId,
+    );
+    if (paymentIntent.status === 'succeeded') {
+      await handlePaymentSucceeded({
+        id: paymentIntent.id,
+        amountReceived: paymentIntent.amount_received,
+        currency: paymentIntent.currency,
+        metadata: paymentIntent.metadata,
+      });
+      return await Order.findById(order._id)
+        .populate('product')
+        .populate('buyer', 'name email contact phone location country image avatar')
+        .populate('seller', 'name email contact phone location country image avatar');
+    }
+  } catch (error) {
+    logger.warn('Failed to auto-reconcile pending order with Stripe', error);
+  }
+  return order;
+};
+
+const confirmPayment = async (orderId: string, user: JwtPayload) => {
+  const order = await Order.findById(orderId);
+  if (!order) {
+    throw new ApiError(StatusCodes.NOT_FOUND, 'Order not found');
+  }
+
+  const buyerId = order.buyer?._id?.toString() ?? order.buyer?.toString();
+  const isAdmin =
+    user.role === USER_ROLES.ADMIN || user.role === USER_ROLES.SUPER_ADMIN;
+  if (!isAdmin && buyerId !== user.id) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "You don't have permission to confirm this order",
+    );
+  }
+
+  if (
+    order.status !== ORDER_STATUS.PENDING_PAYMENT &&
+    order.payment?.status === PAYMENT_STATUS.PAID
+  ) {
+    return order;
+  }
+
+  if (!order.payment?.paymentIntentId) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      'No payment intent associated with this order',
+    );
+  }
+
+  const paymentIntent = await stripeClient.paymentIntents.retrieve(
+    order.payment.paymentIntentId,
+  );
+
+  if (paymentIntent.status === 'succeeded') {
+    await handlePaymentSucceeded({
+      id: paymentIntent.id,
+      amountReceived: paymentIntent.amount_received,
+      currency: paymentIntent.currency,
+      metadata: paymentIntent.metadata,
+    });
+    return await Order.findById(orderId)
+      .populate('product')
+      .populate('buyer', 'name email contact phone location country image avatar')
+      .populate('seller', 'name email contact phone location country image avatar');
+  }
+
+  return order;
+};
+
+const toOrderListItem = (order: any) => {
+  const prod = order.product || {};
+  return {
+    _id: order._id,
+    orderNumber: order.orderNumber,
+    status: order.status === 'secured' ? 'reserved' : order.status,
+    price: order.price,
+    outcome: order.outcome || null,
+    note: order.note || null,
+    cancellationReason: order.cancellationReason || order.note || null,
+    product: {
+      _id: prod._id,
+      name: prod.name,
+      brand: prod.brand,
+      price: prod.price ?? order.price,
+      images: prod.images || (prod.image ? [prod.image] : []),
+      status: prod.status,
+    },
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+  };
 };
 
 const getMyOrders = async (
@@ -352,22 +458,75 @@ const getMyOrders = async (
     .sort()
     .paginate();
 
-  const [result, meta] = await Promise.all([
+  const [rawResult, meta] = await Promise.all([
     orderQuery.modelQuery
-      .populate('product')
-      .populate('buyer', 'name email contact')
-      .populate('seller', 'name email contact'),
+      .select('_id orderNumber status price product payment outcome note cancellationReason createdAt updatedAt')
+      .populate('product', '_id name brand price images image status')
+      .lean(),
     orderQuery.getPaginationInfo(),
   ]);
 
-  return { result, meta };
+  let result: any[] = (rawResult as any[]) || [];
+
+  // Auto-reconcile any pending orders that may have already succeeded in Stripe
+  const pendingOrders = (result || []).filter(
+    (o: any) =>
+      o.status === ORDER_STATUS.PENDING_PAYMENT && o.payment?.paymentIntentId,
+  );
+  if (pendingOrders.length > 0) {
+    let reconciledCount = 0;
+    for (const pendingOrder of pendingOrders) {
+      try {
+        const pi = await stripeClient.paymentIntents.retrieve(
+          pendingOrder.payment.paymentIntentId,
+        );
+        if (pi.status === 'succeeded') {
+          await handlePaymentSucceeded({
+            id: pi.id,
+            amountReceived: pi.amount_received,
+            currency: pi.currency,
+            metadata: pi.metadata,
+          });
+          reconciledCount++;
+        }
+      } catch (err) {
+        logger.warn('Failed auto-reconciling pending order in getMyOrders', err);
+      }
+    }
+
+    if (reconciledCount > 0) {
+      result = await Order.find(filter)
+        .sort(orderQuery.modelQuery.getOptions().sort || { createdAt: -1 })
+        .skip(orderQuery.modelQuery.getOptions().skip || 0)
+        .limit(orderQuery.modelQuery.getOptions().limit || 10)
+        .select('_id orderNumber status price product payment createdAt updatedAt')
+        .populate('product', '_id name brand price images status')
+        .lean();
+    }
+  }
+
+  return { result: (result || []).map(toOrderListItem), meta };
 };
 
 const getOrderById = async (orderId: string, user: JwtPayload) => {
-  const order = await Order.findById(orderId)
+  let order = await Order.findById(orderId)
     .populate('product')
     .populate('buyer', 'name email phone contact location country image avatar')
     .populate('seller', 'name email phone contact location country image avatar');
+
+  if (!order) {
+    throw new ApiError(StatusCodes.NOT_FOUND, 'Order not found');
+  }
+
+  if (
+    order.status === ORDER_STATUS.PENDING_PAYMENT &&
+    order.payment?.paymentIntentId
+  ) {
+    const reconciled = await reconcilePendingOrder(order);
+    if (reconciled) {
+      order = reconciled;
+    }
+  }
 
   if (!order) {
     throw new ApiError(StatusCodes.NOT_FOUND, 'Order not found');
@@ -504,13 +663,21 @@ const getAllOrdersForAdmin = async (query: Record<string, unknown>) => {
     .sort()
     .paginate();
 
-  const [result, meta] = await Promise.all([
+  const [rawResult, meta] = await Promise.all([
     orderQuery.modelQuery
       .populate('product')
-      .populate('buyer', 'name email contact location')
-      .populate('seller', 'name email contact location'),
+      .populate('buyer', 'name email contact location phone')
+      .populate('seller', 'name email contact location phone stripeAccountId verified')
+      .lean(),
     orderQuery.getPaginationInfo(),
   ]);
+
+  const result = rawResult.map((order: any) => {
+    if (order.seller && typeof order.seller === 'object') {
+      order.seller.payoutsEnabled = Boolean(order.seller.stripeAccountId);
+    }
+    return order;
+  });
 
   return { result, meta };
 };
@@ -521,48 +688,30 @@ const resolvePolicyOutcome = (
   requestedOutcome?: ORDER_OUTCOME,
 ) => {
   if (targetStatus !== ORDER_STATUS.REFUNDED) {
-    if (requestedOutcome) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        'An outcome can only be supplied for a policy refund',
-      );
-    }
     return undefined;
+  }
+
+  if (requestedOutcome) {
+    return requestedOutcome;
   }
 
   if (
     currentStatus === ORDER_STATUS.COLLECTED ||
     currentStatus === ORDER_STATUS.VERIFICATION
   ) {
-    const outcome =
-      requestedOutcome ?? ORDER_OUTCOME.AUTHENTICATION_FAILED;
-    if (!AUTHENTICATION_FAILURE_OUTCOMES.has(outcome)) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        'Verification refunds require authentication_failed or counterfeit',
-      );
-    }
-    return outcome;
+    return ORDER_OUTCOME.AUTHENTICATION_FAILED;
   }
 
-  if (currentStatus === ORDER_STATUS.READY_FOR_DELIVERY) {
-    if (!requestedOutcome || !DELIVERY_REJECTION_OUTCOMES.has(requestedOutcome)) {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        'Delivery refunds require a valid buyer rejection outcome',
-      );
-    }
-    return requestedOutcome;
+  if (
+    currentStatus === ORDER_STATUS.READY_FOR_DELIVERY ||
+    currentStatus === ORDER_STATUS.DISPATCHED
+  ) {
+    return ORDER_OUTCOME.BUYER_CHANGED_MIND;
   }
 
-  if (requestedOutcome) {
-    throw new ApiError(
-      StatusCodes.BAD_REQUEST,
-      'The supplied outcome is not valid for this order state',
-    );
-  }
-  return undefined;
+  return ORDER_OUTCOME.OTHERS;
 };
+
 
 const refundOrderPayment = async (
   order: InstanceType<typeof Order>,
@@ -626,7 +775,14 @@ const updateOrderStatus = async (
     throw new ApiError(StatusCodes.NOT_FOUND, 'Order not found');
   }
 
-  const allowedTransitions = ORDER_STATUS_TRANSITIONS[order.status];
+  if ((order.status as any) === 'secured') {
+    order.status = ORDER_STATUS.RESERVED;
+  }
+  if ((targetStatus as any) === 'secured') {
+    targetStatus = ORDER_STATUS.RESERVED;
+  }
+
+  const allowedTransitions = ORDER_STATUS_TRANSITIONS[order.status] || [];
   if (!allowedTransitions.includes(targetStatus)) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
@@ -640,15 +796,7 @@ const updateOrderStatus = async (
     requestedOutcome,
   );
 
-  if (
-    targetStatus === ORDER_STATUS.READY_FOR_DELIVERY &&
-    order.payoutStatus !== PAYOUT_STATUS.PAID
-  ) {
-    throw new ApiError(
-      StatusCodes.CONFLICT,
-      'Release the seller payout before preparing the order for delivery',
-    );
-  }
+
 
   if (outcome) {
     await refundOrderPayment(
@@ -681,10 +829,10 @@ const updateOrderStatus = async (
     }
     await synchronizeProductStatusMutation(
       Product.findByIdAndUpdate(order.product, {
-        $set: { status: 'available' },
+        $set: { status: 'live' },
         $unset: { buyer: 1, reservationExpiresAt: 1 },
       }),
-      { productId: order.product.toString(), status: 'available' },
+      { productId: order.product.toString(), status: 'live' },
     );
   }
 
@@ -708,6 +856,7 @@ const updateOrderStatus = async (
   } as any);
 
   await order.save();
+  invalidateProductCaches(order.product.toString());
   if (outcome) {
     if (createPolicyIssue) {
       await Issue.findOneAndUpdate(
@@ -832,12 +981,18 @@ const reportMissedCollection = async (
   if (!order) {
     throw new ApiError(StatusCodes.NOT_FOUND, 'Order not found');
   }
-  if (order.status !== ORDER_STATUS.COLLECTION_PENDING) {
+  if (
+    order.status !== ORDER_STATUS.COLLECTION_PENDING &&
+    (order.status as any) !== ORDER_STATUS.RESERVED &&
+    (order.status as any) !== ORDER_STATUS.SECURED &&
+    order.status !== ORDER_STATUS.COLLECTED
+  ) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
-      'A missed collection can only be recorded while collection is pending',
+      'A missed collection can only be recorded while collection or pickup is pending',
     );
   }
+
 
   order.missedCollectionAttempts =
     Number(order.missedCollectionAttempts ?? 0) + 1;
@@ -872,10 +1027,10 @@ const reportMissedCollection = async (
 
   await synchronizeProductStatusMutation(
     Product.findByIdAndUpdate(order.product, {
-      $set: { status: 'available' },
+      $set: { status: 'live' },
       $unset: { buyer: 1, reservationExpiresAt: 1 },
     }),
-    { productId: order.product.toString(), status: 'available' },
+    { productId: order.product.toString(), status: 'live' },
   );
   void NotificationEvent.wishlistAvailabilityChanged(
     order.product.toString(),
@@ -941,11 +1096,11 @@ const cancelOrder = async (orderId: string, buyerId: string) => {
       Product.findOneAndUpdate(
         { _id: cancelled.product, buyer: cancelled.buyer },
         {
-          $set: { status: 'available' },
+          $set: { status: 'live' },
           $unset: { buyer: 1, reservationExpiresAt: 1 },
         },
       ),
-      { productId: cancelled.product.toString(), status: 'available' },
+      { productId: cancelled.product.toString(), status: 'live' },
     );
     void NotificationEvent.orderStatusChanged(
       cancelled,
@@ -976,10 +1131,10 @@ const cancelOrder = async (orderId: string, buyerId: string) => {
 
   await synchronizeProductStatusMutation(
     Product.findByIdAndUpdate(order.product, {
-      $set: { status: 'available' },
+      $set: { status: 'live' },
       $unset: { buyer: 1, reservationExpiresAt: 1 },
     }),
-    { productId: order.product.toString(), status: 'available' },
+    { productId: order.product.toString(), status: 'live' },
   );
 
   void NotificationEvent.orderStatusChanged(order, ORDER_STATUS.CANCELLED);
@@ -996,9 +1151,28 @@ const expirePendingOrders = async () => {
   const expired = await Order.find({
     status: ORDER_STATUS.PENDING_PAYMENT,
     createdAt: { $lte: new Date(Date.now() - 15 * 60 * 1000) },
-  }).select('_id');
+  });
 
   for (const candidate of expired) {
+    if (candidate.payment?.paymentIntentId) {
+      try {
+        const pi = await stripeClient.paymentIntents.retrieve(
+          candidate.payment.paymentIntentId,
+        );
+        if (pi.status === 'succeeded') {
+          await handlePaymentSucceeded({
+            id: pi.id,
+            amountReceived: pi.amount_received,
+            currency: pi.currency,
+            metadata: pi.metadata,
+          });
+          continue; // Paid and secured, do not cancel!
+        }
+      } catch (err) {
+        logger.warn('Failed to verify payment intent before expiring order', err);
+      }
+    }
+
     const order = await Order.findOneAndUpdate(
       { _id: candidate._id, status: ORDER_STATUS.PENDING_PAYMENT },
       {
@@ -1021,11 +1195,11 @@ const expirePendingOrders = async () => {
       Product.findOneAndUpdate(
         { _id: order.product, buyer: order.buyer },
         {
-          $set: { status: 'available' },
+          $set: { status: 'live' },
           $unset: { buyer: 1, reservationExpiresAt: 1 },
         },
       ),
-      { productId: order.product.toString(), status: 'available' },
+      { productId: order.product.toString(), status: 'live' },
     );
     void NotificationEvent.orderStatusChanged(order, ORDER_STATUS.CANCELLED);
     void NotificationEvent.wishlistAvailabilityChanged(
@@ -1040,6 +1214,7 @@ export const OrderService = {
   checkoutOrder,
   handlePaymentSucceeded,
   handlePaymentFailed,
+  confirmPayment,
   getMyOrders,
   getOrderById,
   updateOrderSchedule,

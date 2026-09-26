@@ -1,11 +1,15 @@
 /* eslint-disable no-unused-vars */
 export enum NOTIFICATION_TYPE {
   ITEM_LISTED = 'item_listed',
+  ITEM_UNDER_REVIEW = 'item_under_review',
+  ITEM_LIVE = 'item_live',
+  ITEM_REJECTED = 'item_rejected',
   ORDER_SECURED = 'order_secured',
   ITEM_RESERVED = 'item_reserved',
   COLLECTION_PENDING = 'collection_pending',
   ITEM_COLLECTED = 'item_collected',
   ITEM_VERIFICATION = 'item_verification',
+  ITEM_DISPATCHED = 'item_dispatched',
   PAYOUT_PROCESSING = 'payout_processing',
   PAYOUT_PAID = 'payout_paid',
   READY_FOR_DELIVERY = 'ready_for_delivery',

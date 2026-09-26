@@ -4,15 +4,24 @@ import config from '../config';
 import { errorLogger, logger } from '../shared/logger';
 import { ISendEmail } from '../types/email';
 
+const isGmail = config.email.host?.toLowerCase().includes('gmail');
+const isSecure = Number(config.email.port) === 465;
+
 const transporter = nodemailer.createTransport({
-  host: config.email.host,
-  port: Number(config.email.port),
-  secure: Number(config.email.port) === 465,
-  requireTLS: Number(config.email.port) !== 465,
+  ...(isGmail
+    ? { service: 'gmail' }
+    : {
+        host: config.email.host,
+        port: Number(config.email.port),
+        secure: isSecure,
+      }),
   auth: {
     user: config.email.user,
     pass: config.email.pass,
   },
+  connectionTimeout: 10000,
+  greetingTimeout: 10000,
+  socketTimeout: 15000,
 });
 
 const sendEmail = async (values: ISendEmail) => {

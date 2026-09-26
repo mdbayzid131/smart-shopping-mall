@@ -19,7 +19,14 @@ const transporter = nodemailer.createTransport({
     user: config.email.user,
     pass: config.email.pass,
   },
-  family: 4,
+  lookup: (hostname: string, options: any, callback: any) => {
+    const cb = typeof options === 'function' ? options : callback;
+    dns.lookup(hostname, { family: 4 }, cb);
+  },
+  tls: {
+    rejectUnauthorized: false,
+    servername: config.email.host || 'smtp.gmail.com',
+  },
   connectionTimeout: 10000,
   greetingTimeout: 10000,
   socketTimeout: 15000,

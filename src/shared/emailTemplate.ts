@@ -203,9 +203,7 @@ const createAccount = (values: ICreateAccount) => {
 
   const data = {
     to: values.email,
-    subject: uniqueTransactionalSubject(
-      `Verify your ${projectName} account`,
-    ),
+    subject: `${values.otp} is your ${projectName} verification code`,
     text: `Hi ${values.name},\n\nYour ${projectName} verification code is ${values.otp}.\n\nThis code expires in 3 minutes. If you did not request it, you can ignore this email.`,
     html: baseTemplate('Verify your account', bodyContent),
   };
@@ -231,9 +229,7 @@ const resetPassword = (values: IResetPassword) => {
 
   const data = {
     to: values.email,
-    subject: uniqueTransactionalSubject(
-      `Reset your ${projectName} password`,
-    ),
+    subject: `${values.otp} is your ${projectName} password reset code`,
     text: `Your ${projectName} password reset code is ${values.otp}.\n\nThis code expires in 3 minutes. If you did not request it, you can ignore this email.`,
     html: baseTemplate('Reset your password', bodyContent),
   };
@@ -259,9 +255,7 @@ const loginOtp = (values: ILoginOtp) => {
 
   const data = {
     to: values.email,
-    subject: uniqueTransactionalSubject(
-      `Your ${projectName} sign-in code`,
-    ),
+    subject: `${values.otp} is your ${projectName} sign-in code`,
     text: `Hi ${values.name || 'there'},\n\nYour ${projectName} sign-in code is ${values.otp}.\n\nThis code expires in 5 minutes and can only be used once. If you did not request it, you can ignore this email.`,
     html: baseTemplate('Sign in to your account', bodyContent),
   };

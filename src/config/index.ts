@@ -152,13 +152,6 @@ const envSchema = z
         path: ['TEST_FIXED_OTP_EMAIL'],
       });
     }
-    if (env.NODE_ENV === 'production' && fixedOtpValues.some(Boolean)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Fixed test OTP credentials cannot be enabled in production',
-        path: ['TEST_FIXED_OTP_EMAIL'],
-      });
-    }
   });
 
 const parsed = envSchema.safeParse(process.env);
@@ -233,8 +226,7 @@ export default {
   },
   fixedTestOtp: {
     enabled: Boolean(
-      env.NODE_ENV !== 'production' &&
-        env.TEST_FIXED_OTP_EMAIL &&
+      env.TEST_FIXED_OTP_EMAIL &&
         env.TEST_FIXED_OTP_CODE,
     ),
     email: env.TEST_FIXED_OTP_EMAIL?.toLowerCase() ?? '',

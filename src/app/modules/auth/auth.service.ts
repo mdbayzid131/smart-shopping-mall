@@ -193,14 +193,15 @@ const requestLoginOtpToDB = async (payload: IRequestLoginOtp) => {
       logger.info(
         `[AUTH] Passwordless OTP generated & emailed to ${email} (expires ${OTP_TTL_MS / 60000}m)`,
       );
-    } catch (err) {
+    } catch (err: any) {
       errorLogger.error(`[AUTH] Failed to send login OTP email to ${email}`, err);
       if (createdPendingUser) {
         await User.deleteOne({ _id: user._id, verified: false });
       }
+      const errDetail = err?.message ? ` (${err.message})` : '';
       throw new ApiError(
         StatusCodes.INTERNAL_SERVER_ERROR,
-        'Failed to send sign-in code. Please try again later.',
+        `Failed to send sign-in code${errDetail}. Please check email configuration.`,
       );
     }
   }

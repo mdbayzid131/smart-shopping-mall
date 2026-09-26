@@ -93,7 +93,10 @@ const envSchema = z
     STRIPE_SECRET_KEY: z.string().min(1),
     WEBHOOK_SECRET: z.string().min(1),
     STRIPE_CURRENCY: z.string().length(3).default('aed'),
-    API_PUBLIC_URL: z.string().url(),
+    API_PUBLIC_URL: z.preprocess(
+      val => val || process.env.RENDER_EXTERNAL_URL,
+      z.string().url(),
+    ),
     TEST_FIXED_OTP_EMAIL: z.preprocess(
       emptyStringToUndefined,
       z.string().trim().email().optional(),

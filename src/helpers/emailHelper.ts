@@ -1,28 +1,29 @@
 import nodemailer from 'nodemailer';
 import crypto from 'node:crypto';
+import dns from 'node:dns';
 import config from '../config';
 import { errorLogger, logger } from '../shared/logger';
 import { ISendEmail } from '../types/email';
 
-const isGmail = config.email.host?.toLowerCase().includes('gmail');
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch (_) {}
+
 const isSecure = Number(config.email.port) === 465;
 
 const transporter = nodemailer.createTransport({
-  ...(isGmail
-    ? { service: 'gmail' }
-    : {
-        host: config.email.host,
-        port: Number(config.email.port),
-        secure: isSecure,
-      }),
+  host: config.email.host || 'smtp.gmail.com',
+  port: Number(config.email.port) || 465,
+  secure: isSecure,
   auth: {
     user: config.email.user,
     pass: config.email.pass,
   },
+  family: 4,
   connectionTimeout: 10000,
   greetingTimeout: 10000,
   socketTimeout: 15000,
-});
+} as any);
 
 transporter.verify((error, success) => {
   if (error) {

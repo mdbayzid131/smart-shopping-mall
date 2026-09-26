@@ -24,6 +24,14 @@ const transporter = nodemailer.createTransport({
   socketTimeout: 15000,
 });
 
+transporter.verify((error, success) => {
+  if (error) {
+    errorLogger.error(`[EMAIL] SMTP configuration verification failed: ${error.message}`);
+  } else {
+    logger.info('[EMAIL] SMTP Server is ready to send messages');
+  }
+});
+
 const sendEmail = async (values: ISendEmail) => {
   try {
     const info = await transporter.sendMail({
@@ -42,10 +50,10 @@ const sendEmail = async (values: ISendEmail) => {
       },
     });
 
-    logger.info('Mail send successfully', info.accepted);
+    logger.info(`[EMAIL] Mail sent successfully to ${values.to}`, info.accepted);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    errorLogger.error(`Email delivery failed: ${message}`);
+    errorLogger.error(`[EMAIL] Delivery failed to ${values.to}: ${message}`, error);
     throw error;
   }
 };

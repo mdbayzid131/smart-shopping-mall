@@ -13,7 +13,13 @@ const createProductZodSchema = z.object({
   packaging: z.string().optional(),
   collectionAddress: z.string().optional(),
   sellerPhone: z.string().optional(),
-});
+  sellerName: z.string().optional(),
+  sellerLocation: z.string().optional(),
+  sellerCountry: z.string().optional(),
+  location: z.string().optional(),
+  phone: z.string().optional(),
+  country: z.string().optional(),
+}).passthrough();
 
 const updateProductZodSchema = z.object({
   body: z.object({

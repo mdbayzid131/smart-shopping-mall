@@ -30,6 +30,7 @@ const orderSchema = new Schema<IOrder>(
       address: { type: String, required: true },
       location: { type: String, required: true },
       phone: { type: String, required: true },
+      country: { type: String, default: 'UAE' },
     },
     payment: {
       provider: { type: String, enum: ['stripe'], default: 'stripe' },

@@ -7,10 +7,13 @@ import {
 } from '../../../enums/order';
 
 export type IDeliveryDetails = {
+  name?: string;
   address: string;
   location: string;
+  city?: string;
   phone: string;
-}
+  country?: string;
+};
 
 export type IPickupWindow = {
   start: Date;

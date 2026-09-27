@@ -200,13 +200,26 @@ export const getDeliveryState = (status: ORDER_STATUS) => {
 const normalizeParty = (party: any, fallback: any = {}) => {
   if (!party) return null;
   const value = toPlain(party);
+  const resolvedPhone = value.phone || value.contact || fallback.phone || null;
+  const country = value.country || fallback.country || 'UAE';
+  let location = value.location || fallback.location || null;
+
+  if (typeof location === 'string' && location.includes(',')) {
+    const parts = location.split(',').map((p: string) => p.trim());
+    if (parts.length > 1 && parts[parts.length - 1].toUpperCase() === 'UAE') {
+      parts.pop();
+      location = parts.join(', ') || null;
+    }
+  }
+
   return {
     _id: idOf(value),
     name: value.name ?? null,
     email: value.email ?? null,
-    phone: value.phone || value.contact || fallback.phone || null,
-    location: value.location || fallback.location || null,
-    country: value.country ?? null,
+    phone: resolvedPhone,
+    contact: resolvedPhone,
+    location,
+    country: country || 'UAE',
     profileImage: value.avatar || value.image || value.profileImage || null,
   };
 };
@@ -280,6 +293,7 @@ export const buildOrderDetails = ({
       address: deliveryDetails.address ?? null,
       location: deliveryDetails.location ?? null,
       phone: deliveryDetails.phone ?? null,
+      country: deliveryDetails.country ?? 'UAE',
     },
     payment: {
       provider: value.payment?.provider ?? 'stripe',

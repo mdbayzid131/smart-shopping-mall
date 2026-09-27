@@ -132,26 +132,73 @@ const checkoutOrder = async (
     );
 
     const order = await Order.create({
-    orderNumber,
-    product: product._id,
-    buyer: buyerId,
-    seller: product.seller,
-    price: product.price,
-    platformFee,
-    sellerPayout,
-    note: note?.trim(),
-    deliveryDetails,
-    payment: {
-      provider: 'stripe',
-      paymentIntentId: paymentIntent.id,
-      status: PAYMENT_STATUS.PENDING,
-    },
-    payoutStatus: PAYOUT_STATUS.PENDING,
-    status: ORDER_STATUS.PENDING_PAYMENT,
-    statusHistory: [
-      { status: ORDER_STATUS.PENDING_PAYMENT, changedAt: new Date() },
-    ],
+      orderNumber,
+      product: product._id,
+      buyer: buyerId,
+      seller: product.seller,
+      price: product.price,
+      platformFee,
+      sellerPayout,
+      note: note?.trim(),
+      deliveryDetails,
+      payment: {
+        provider: 'stripe',
+        paymentIntentId: paymentIntent.id,
+        status: PAYMENT_STATUS.PENDING,
+      },
+      payoutStatus: PAYOUT_STATUS.PENDING,
+      status: ORDER_STATUS.PENDING_PAYMENT,
+      statusHistory: [
+        { status: ORDER_STATUS.PENDING_PAYMENT, changedAt: new Date() },
+      ],
     });
+
+    // Auto-sync buyer profile info (phone, location/city, country, address, name) in DB
+    if (buyerId && deliveryDetails) {
+      const buyerUpdate: Record<string, any> = {};
+      if (
+        deliveryDetails.phone &&
+        typeof deliveryDetails.phone === 'string' &&
+        deliveryDetails.phone.trim().length > 0
+      ) {
+        buyerUpdate.phone = deliveryDetails.phone.trim();
+        buyerUpdate.contact = deliveryDetails.phone.trim();
+      }
+      const buyerLocation = deliveryDetails.location || deliveryDetails.city;
+      if (
+        buyerLocation &&
+        typeof buyerLocation === 'string' &&
+        buyerLocation.trim().length > 0
+      ) {
+        buyerUpdate.location = buyerLocation.trim();
+      }
+      if (
+        deliveryDetails.country &&
+        typeof deliveryDetails.country === 'string' &&
+        deliveryDetails.country.trim().length > 0
+      ) {
+        buyerUpdate.country = deliveryDetails.country.trim();
+      }
+      if (
+        deliveryDetails.address &&
+        typeof deliveryDetails.address === 'string' &&
+        deliveryDetails.address.trim().length > 0
+      ) {
+        buyerUpdate.address = deliveryDetails.address.trim();
+      }
+      if (
+        deliveryDetails.name &&
+        typeof deliveryDetails.name === 'string' &&
+        deliveryDetails.name.trim().length > 0
+      ) {
+        buyerUpdate.name = deliveryDetails.name.trim();
+      }
+      if (Object.keys(buyerUpdate).length > 0) {
+        await User.findByIdAndUpdate(buyerId, { $set: buyerUpdate }).catch(
+          () => undefined,
+        );
+      }
+    }
 
     return { order, clientSecret: paymentIntent.client_secret };
   } catch (error) {

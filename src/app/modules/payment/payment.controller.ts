@@ -57,8 +57,10 @@ const connectStatus = catchAsync(async (req: Request, res: Response) => {
 });
 
 const connectReturn = catchAsync(async (req: Request, res: Response) => {
-  const result = await ConnectService.statusFromState(String(req.query.state ?? ''));
-  res.status(StatusCodes.OK).json({ success: true, data: result });
+  try {
+    await ConnectService.statusFromState(String(req.query.state ?? ''));
+  } catch (_) {}
+  res.redirect('closete://stripe-return');
 });
 
 const connectRefresh = catchAsync(async (req: Request, res: Response) => {

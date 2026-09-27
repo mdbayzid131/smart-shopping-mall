@@ -7,6 +7,7 @@ const checkoutZodSchema = z.object({
       address: z.string({ required_error: 'Address is required' }),
       location: z.string({ required_error: 'Location is required' }),
       phone: z.string({ required_error: 'Phone number is required' }),
+      country: z.string().optional().default('UAE'),
     }),
     note: z.string().trim().max(1000).optional(),
   }),

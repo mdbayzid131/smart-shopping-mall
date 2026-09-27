@@ -14,6 +14,7 @@ import {
   buildProductFeedCacheDiscriminator,
   buildProductFeedViewerFilter,
 } from './product-feed.util';
+import { User } from '../user/user.model';
 import { Wishlist } from '../wishlist/wishlist.model';
 import { Order } from '../order/order.model';
 import { NotificationEvent } from '../notification/notification.event';
@@ -115,9 +116,42 @@ const createProductToDB = async (
     payload.proofOfPurchase = proofUrl;
   }
 
+  // Auto-sync seller profile info (phone, location, country, sellerName) in DB
+  if (payload.seller) {
+    const sellerUpdate: Record<string, any> = {};
+    const sellerPhone = (payload as any).sellerPhone;
+    const sellerLocation = (payload as any).sellerLocation;
+    const sellerCountry = (payload as any).sellerCountry;
+    const sellerName = (payload as any).sellerName;
+
+    if (sellerPhone && typeof sellerPhone === 'string' && sellerPhone.trim().length > 0) {
+      sellerUpdate.phone = sellerPhone.trim();
+      sellerUpdate.contact = sellerPhone.trim();
+      payload.sellerPhone = sellerPhone.trim();
+    }
+    if (sellerLocation && typeof sellerLocation === 'string' && sellerLocation.trim().length > 0) {
+      sellerUpdate.location = sellerLocation.trim();
+      payload.collectionAddress = sellerLocation.trim();
+    }
+    if (sellerCountry && typeof sellerCountry === 'string' && sellerCountry.trim().length > 0) {
+      sellerUpdate.country = sellerCountry.trim();
+    }
+    if (sellerName && typeof sellerName === 'string' && sellerName.trim().length > 0) {
+      sellerUpdate.name = sellerName.trim();
+    }
+    if (Object.keys(sellerUpdate).length > 0) {
+      await User.findByIdAndUpdate(payload.seller, { $set: sellerUpdate }).catch(() => undefined);
+    }
+
+    delete (payload as any).sellerPhone;
+    delete (payload as any).sellerLocation;
+    delete (payload as any).sellerCountry;
+    delete (payload as any).sellerName;
+  }
+
   const created = await Product.create(payload);
   const result = await Product.findById(created._id)
-    .populate('seller', 'name image avatar contact location country')
+    .populate('seller', 'name image avatar contact phone location country')
     .lean();
   invalidateProductCaches(created._id.toString());
   void NotificationEvent.itemListed(
@@ -188,7 +222,7 @@ const getAllProductsFromDB = async (
 
       const [result, meta] = await Promise.all([
         productQuery.modelQuery
-          .populate('seller', 'name image avatar contact location country')
+          .populate('seller', 'name image avatar contact phone location country')
           .lean(),
         productQuery.getPaginationInfo(),
       ]);
@@ -230,7 +264,7 @@ const getPendingReviewProductsFromDB = async (query: Record<string, unknown>) =>
 
   const [result, meta] = await Promise.all([
     productQuery.modelQuery
-      .populate('seller', 'name email image avatar contact location country stripeAccountId')
+      .populate('seller', 'name email image avatar contact phone location country stripeAccountId')
       .lean(),
     productQuery.getPaginationInfo(),
   ]);
@@ -365,7 +399,7 @@ const getAllProductsForAdmin = async (query: Record<string, unknown>) => {
 
   const [result, meta] = await Promise.all([
     productQuery.modelQuery
-      .populate('seller', 'name email image avatar contact location country stripeAccountId')
+      .populate('seller', 'name email image avatar contact phone location country stripeAccountId')
       .populate('buyer', 'name email image avatar contact phone location country address')
       .lean(),
     productQuery.getPaginationInfo(),
@@ -378,7 +412,7 @@ const getProductDetailsFromDB = async (id: string) => {
   const cacheKey = `${PRODUCT_DETAIL_CACHE_PREFIX}${id}`;
   return cache.getOrSet(cacheKey, PRODUCT_DETAIL_CACHE_TTL_MS, async () => {
     const result = await Product.findById(id)
-      .populate('seller', 'name image avatar contact location country')
+      .populate('seller', 'name image avatar contact phone location country')
       .populate('buyer', 'name image avatar contact phone location country address')
       .lean();
     if (!result) {

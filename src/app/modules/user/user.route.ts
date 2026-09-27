@@ -53,9 +53,19 @@ router
 
 router
   .route('/')
+  .post(
+    validateRequest(UserValidation.createUserZodSchema),
+    UserController.createUser,
+  )
   .get(
     auth(USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN),
     UserController.getAllUsers,
   );
+
+router.post(
+  '/create-user',
+  validateRequest(UserValidation.createUserZodSchema),
+  UserController.createUser,
+);
 
 export const UserRoutes = router;

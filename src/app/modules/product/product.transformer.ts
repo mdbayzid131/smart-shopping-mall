@@ -6,7 +6,7 @@
 export const formatSeller = (seller: any) => {
   if (!seller || typeof seller !== 'object') return null;
 
-  const { _id, name, avatar, image, contact } = seller;
+  const { _id, name, avatar, image, contact, phone } = seller;
   let { location, country } = seller;
 
   if (!country && typeof location === 'string' && location.includes(',')) {
@@ -15,13 +15,16 @@ export const formatSeller = (seller: any) => {
     location = parts.join(', ');
   }
 
+  const resolvedPhone = phone || contact || null;
+
   return {
     _id: _id?.toString(),
     name: name || '',
     profileImage: avatar || image || null,
-    contact: contact || null,
+    contact: resolvedPhone,
+    phone: resolvedPhone,
     location: location || null,
-    country: country || null,
+    country: country || 'UAE',
   };
 };
 
@@ -32,16 +35,25 @@ export const formatBuyer = (buyer: any) => {
   if (!buyer || typeof buyer !== 'object') return null;
 
   const { _id, name, avatar, image, contact } = buyer;
-  const { location, country, phone, address } = buyer;
+  let { location, country } = buyer;
+  const { phone, address } = buyer;
+
+  if (!country && typeof location === 'string' && location.includes(',')) {
+    const parts = location.split(',').map((p: string) => p.trim());
+    country = parts.pop() || null;
+    location = parts.join(', ');
+  }
+
+  const resolvedPhone = phone || contact || null;
 
   return {
     _id: _id?.toString(),
     name: name || '',
     profileImage: avatar || image || null,
-    contact: contact || phone || null,
-    phone: contact || phone || null,
+    contact: resolvedPhone,
+    phone: resolvedPhone,
     location: location || null,
-    country: country || null,
+    country: country || 'UAE',
     address: address || null,
   };
 };

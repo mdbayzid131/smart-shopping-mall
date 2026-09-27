@@ -86,6 +86,7 @@ const userSchema = new Schema<IUser, UserModal>(
     },
     country: {
       type: String,
+      default: 'UAE',
     },
     password: {
       type: String,
@@ -95,7 +96,7 @@ const userSchema = new Schema<IUser, UserModal>(
     },
     image: {
       type: String,
-      default: 'https://i.ibb.co/z5YHLV9/profile.png',
+      default: null,
     },
     avatar: {
       type: String,

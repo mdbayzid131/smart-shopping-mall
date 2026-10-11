@@ -9,7 +9,9 @@ import {
 
 const getProjectName = () => config.branding.projectName;
 
-const getLogoUrl = () => config.branding.logoUrl || '';
+const getLogoUrl = () =>
+  config.branding.logoUrl ||
+  `${config.api_public_url}/uploads/closet_logo.svg`;
 
 const uniqueTransactionalSubject = (subject: string) =>
   `${subject} ${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
@@ -38,19 +40,23 @@ const baseTemplate = (title: string, bodyContent: string) => {
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>${projectName}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500&display=swap" rel="stylesheet">
     <style>
       body {
         margin: 0;
         padding: 0;
-        background-color: #ffffff;
+        background-color: #f4f4f5;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       }
 
 
       .wrapper {
         width: 100%;
         table-layout: fixed;
-        background-color: #ffffff;
-        padding: 24px 0;
+        background-color: #f4f4f5;
+        padding: 32px 0;
       }
 
 
@@ -58,47 +64,49 @@ const baseTemplate = (title: string, bodyContent: string) => {
         width: 100%;
         max-width: 480px;
         margin: 0 auto;
-        background-color: #050816;
-        border-radius: 16px;
-        border: 1px solid #111827;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+        background-color: #0E0F12;
+        border-radius: 20px;
+        border: 1px solid #1F2229;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
         color: #e5e7eb;
+        overflow: hidden;
       }
 
 
       .header {
-        padding: 32px 24px 16px;
+        padding: 32px 24px 20px;
         text-align: center;
+        background: #0E0F12;
       }
 
 
       .brand-name {
-        font-size: 22px;
-        font-weight: 600;
-        letter-spacing: 0.04em;
+        font-family: Georgia, Cambria, 'Times New Roman', Times, serif;
+        font-size: 30px;
+        line-height: 36px;
+        font-weight: normal;
+        letter-spacing: 0.025em;
+        color: #E2B744;
+        background: linear-gradient(99.37deg, #AF7413 4.77%, #C98C28 19.33%, #E2B744 38.93%, #FFED81 50.54%, #E1C24E 62.1%, #A06008 90.74%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        display: inline-block;
+        text-align: center;
+        margin: 0 auto;
       }
 
 
       .logo {
         display: block;
-        margin: 0 auto 24px;
-        max-width: 80px;
+        margin: 0 auto 20px;
+        max-width: 140px;
         height: auto;
-        border-radius: 12px;
-      }
-
-
-      .header-divider {
-        margin: 12px auto 0;
-        width: 100%;
-        max-width: 80%;
-        height: 1px;
-        background: linear-gradient(to right, transparent, #1d4ed8, transparent);
       }
 
 
       .content {
-        padding: 8px 24px 24px;
+        padding: 12px 28px 28px;
         font-size: 14px;
         line-height: 1.6;
         text-align: center;
@@ -108,30 +116,33 @@ const baseTemplate = (title: string, bodyContent: string) => {
       .content-title {
         font-size: 22px;
         font-weight: 600;
-        margin: 0 0 12px;
+        margin: 0 0 14px;
         color: #f9fafb;
       }
 
 
       .otp-box {
         display: inline-block;
-        margin: 24px 0 8px;
-        padding: 14px 32px;
+        margin: 20px 0 10px;
+        padding: 14px 38px;
         border-radius: 9999px;
-        background-color: #2563eb;
-        color: #ffffff;
-        font-size: 24px;
-        font-weight: 600;
-        letter-spacing: 0.25em;
+        background: #E2B744;
+        background: linear-gradient(99.37deg, #AF7413 4.77%, #C98C28 19.33%, #E2B744 38.93%, #FFED81 50.54%, #E1C24E 62.1%, #A06008 90.74%);
+        color: #000000;
+        font-size: 26px;
+        font-weight: 700;
+        letter-spacing: 0.22em;
+        box-shadow: 0 4px 16px rgba(214, 160, 66, 0.25);
       }
 
 
       .footer {
-        padding: 16px 24px 24px;
+        padding: 20px 24px 28px;
         font-size: 12px;
         color: #9ca3af;
         text-align: center;
-        border-top: 1px solid #111827;
+        border-top: 1px solid #1F2229;
+        background: #090A0D;
       }
 
 
@@ -145,7 +156,7 @@ const baseTemplate = (title: string, bodyContent: string) => {
 
 
         .content {
-          padding: 8px 16px 24px;
+          padding: 8px 18px 24px;
         }
       }
     </style>
@@ -156,25 +167,25 @@ const baseTemplate = (title: string, bodyContent: string) => {
         <td align="center">
           <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="main">
             <tr>
-              <td class="header">
+              <td class="header" style="padding: 32px 24px 20px; text-align: center; background: #0E0F12;">
                 ${
                   logoUrl
-                    ? `<img src="${logoUrl}" alt="${projectName} logo" class="logo" />`
-                    : `<div class="brand-name">${projectName}</div>`
+                    ? `<img src="${logoUrl}" alt="${projectName}" width="160" height="46" class="logo" style="display: block; margin: 0 auto; width: 160px; max-width: 160px; height: auto; border: 0; outline: none; text-decoration: none;" />`
+                    : `<span class="brand-name" style="font-family: Georgia, Cambria, 'Times New Roman', Times, serif; font-size: 30px; line-height: 36px; font-weight: normal; letter-spacing: 0.025em; color: #E2B744; background: linear-gradient(99.37deg, #AF7413 4.77%, #C98C28 19.33%, #E2B744 38.93%, #FFED81 50.54%, #E1C24E 62.1%, #A06008 90.74%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; display: inline-block; text-align: center;">${projectName}</span>`
                 }
-                <div class="header-divider"></div>
               </td>
             </tr>
             <tr>
               <td class="content">
-                <h1 class="content-title">${title}</h1>
+                <h1 class="content-title" style="color: #ffffff; font-size: 22px; font-weight: 600; margin: 0 0 14px;">${title}</h1>
                 ${bodyContent}
               </td>
             </tr>
             <tr>
-              <td class="footer">
-                <div>You are receiving this email from ${projectName}.</div>
-                <div>© ${year} ${projectName}. All rights reserved.</div>
+              <td class="footer" style="padding: 20px 24px 28px; font-size: 12px; color: #9ca3af; text-align: center; border-top: 1px solid #1F2229; background: #090A0D;">
+                <div style="color: #9ca3af; font-size: 12px; margin-bottom: 4px;">${projectName} · Verified Luxury Resale Marketplace</div>
+                <div style="color: #6b7280; font-size: 11px; margin-bottom: 4px;">Dubai, United Arab Emirates</div>
+                <div style="color: #6b7280; font-size: 11px;">© ${year} ${projectName}. All rights reserved.</div>
               </td>
             </tr>
           </table>
@@ -192,7 +203,7 @@ const createAccount = (values: ICreateAccount) => {
     <p style="margin: 0 0 10px; color: #d1d5db;">
       Hey ${values.name}, use the one-time passcode below to complete verification of your ${projectName} account.
     </p>
-    <div class="otp-box">${values.otp}</div>
+    <div class="otp-box" style="display: inline-block; margin: 20px 0 10px; padding: 14px 38px; border-radius: 9999px; background: #E2B744; background: linear-gradient(99.37deg, #AF7413 4.77%, #C98C28 19.33%, #E2B744 38.93%, #FFED81 50.54%, #E1C24E 62.1%, #A06008 90.74%); color: #000000; font-size: 26px; font-weight: 700; letter-spacing: 0.22em; box-shadow: 0 4px 16px rgba(214, 160, 66, 0.25);">${values.otp}</div>
     <p style="margin: 8px 0 4px; color: #9ca3af;">
       Code expires in 3 minutes.
     </p>
@@ -218,7 +229,7 @@ const resetPassword = (values: IResetPassword) => {
     <p style="margin: 0 0 10px; color: #d1d5db;">
       Use the one-time passcode below to reset the password for your ${projectName} account.
     </p>
-    <div class="otp-box">${values.otp}</div>
+    <div class="otp-box" style="display: inline-block; margin: 20px 0 10px; padding: 14px 38px; border-radius: 9999px; background: #E2B744; background: linear-gradient(99.37deg, #AF7413 4.77%, #C98C28 19.33%, #E2B744 38.93%, #FFED81 50.54%, #E1C24E 62.1%, #A06008 90.74%); color: #000000; font-size: 26px; font-weight: 700; letter-spacing: 0.22em; box-shadow: 0 4px 16px rgba(214, 160, 66, 0.25);">${values.otp}</div>
     <p style="margin: 8px 0 4px; color: #9ca3af;">
       Code expires in 3 minutes.
     </p>
@@ -244,7 +255,7 @@ const loginOtp = (values: ILoginOtp) => {
     <p style="margin: 0 0 10px; color: #d1d5db;">
         Hey ${values.name || 'there'}, use the one-time passcode below to sign in to your ${projectName} account.
     </p>
-    <div class="otp-box">${values.otp}</div>
+    <div class="otp-box" style="display: inline-block; margin: 20px 0 10px; padding: 14px 38px; border-radius: 9999px; background: #E2B744; background: linear-gradient(99.37deg, #AF7413 4.77%, #C98C28 19.33%, #E2B744 38.93%, #FFED81 50.54%, #E1C24E 62.1%, #A06008 90.74%); color: #000000; font-size: 26px; font-weight: 700; letter-spacing: 0.22em; box-shadow: 0 4px 16px rgba(214, 160, 66, 0.25);">${values.otp}</div>
     <p style="margin: 8px 0 4px; color: #9ca3af;">
       Code expires in 5 minutes and can only be used once.
     </p>

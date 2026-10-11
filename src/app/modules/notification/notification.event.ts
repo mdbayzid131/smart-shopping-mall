@@ -428,13 +428,13 @@ const issueResolved = async (
   );
 
 const wishlistItemSaved = async (
-  userId: string,
+  sellerId: string,
   wishlistId: string,
   productId: string,
   productName: string,
 ) =>
   NotificationService.safeCreateNotification({
-    recipientId: userId,
+    recipientId: sellerId,
     type: NOTIFICATION_TYPE.WISHLIST_ITEM_SAVED,
     title: 'Added to Wishlist',
     body: `The ${productName} has been saved to your wishlist.`,

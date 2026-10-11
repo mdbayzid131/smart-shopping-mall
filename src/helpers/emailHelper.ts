@@ -45,6 +45,7 @@ const sendEmail = async (values: ISendEmail) => {
     const info = await transporter.sendMail({
       from: `"${config.branding.projectName}" <${config.email.from}>`,
       to: values.to,
+      replyTo: config.email.from,
       subject: values.subject,
       text: values.text,
       html: values.html,
@@ -53,7 +54,10 @@ const sendEmail = async (values: ISendEmail) => {
         to: values.to,
       },
       headers: {
-        'Auto-Submitted': 'auto-generated',
+        'X-Priority': '1',
+        'Importance': 'high',
+        'Priority': 'urgent',
+        'X-Mailer': 'Closeté Mailer',
         'X-Entity-Ref-ID': crypto.randomUUID(),
       },
     });

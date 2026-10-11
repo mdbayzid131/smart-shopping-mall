@@ -14,7 +14,9 @@ const addToWishlist = async (
   userId: string,
   productId: string,
 ): Promise<WishlistMutationResult> => {
-  const product = await Product.findById(productId).select('name wishlistCount');
+  const product = await Product.findById(productId).select(
+    'name wishlistCount seller',
+  );
   if (!product) {
     throw new ApiError(StatusCodes.NOT_FOUND, 'Product not found');
   }
@@ -49,12 +51,15 @@ const addToWishlist = async (
     publishProductWishlistCount(productId, wishlistCount);
   }
   if (changed) {
-    void NotificationEvent.wishlistItemSaved(
-      userId,
-      wishlist._id.toString(),
-      productId,
-      product.name,
-    );
+    const sellerId = product.seller?.toString();
+    if (sellerId && sellerId !== userId) {
+      void NotificationEvent.wishlistItemSaved(
+        sellerId,
+        wishlist._id.toString(),
+        productId,
+        product.name,
+      );
+    }
   }
 
   return {

@@ -37,7 +37,8 @@ app.use(
       if (
         !origin ||
         config.cors_origin.includes('*') ||
-        config.cors_origin.includes(origin)
+        config.cors_origin.includes(origin) ||
+        (config.api_public_url && origin === config.api_public_url)
       ) {
         callback(null, true);
         return;

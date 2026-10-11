@@ -122,6 +122,10 @@ const accountStatus = async (userId: string) => {
     }
     return throwConnectProviderError('retrieve account', error);
   }
+  if (account.details_submitted && account.payouts_enabled) {
+    void NotificationEvent.sellerPayoutConnected(userId);
+  }
+
   return {
     connected: true,
     detailsSubmitted: account.details_submitted,
@@ -197,7 +201,6 @@ const onboardingLink = async (userId: string) => {
   } catch (error) {
     return throwConnectProviderError('create account link', error);
   }
-  void NotificationEvent.sellerOnboardingRequired(userId);
   return { url: link.url, expiresAt: link.expires_at };
 };
 

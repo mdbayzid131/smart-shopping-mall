@@ -561,6 +561,16 @@ const sellerOnboardingRequired = async (userId: string) =>
     data: { screen: 'seller_onboarding' },
   });
 
+const sellerPayoutConnected = async (userId: string) =>
+  NotificationService.safeCreateNotification({
+    recipientId: userId,
+    type: NOTIFICATION_TYPE.SELLER_ONBOARDING_REQUIRED,
+    title: 'Payout details verified',
+    body: 'Your payout details have been successfully connected. You are now ready to receive payments for sold items.',
+    eventKey: `seller:${userId}:payout-connected`,
+    data: { screen: 'seller_onboarding' },
+  });
+
 export const NotificationEvent = {
   itemListed,
   itemApproved,
@@ -578,6 +588,7 @@ export const NotificationEvent = {
   wishlistItemAvailable,
   wishlistAvailabilityChanged,
   sellerOnboardingRequired,
+  sellerPayoutConnected,
   authenticationPassed,
   authenticationFailed,
   collectionMissed,

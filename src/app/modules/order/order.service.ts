@@ -705,7 +705,14 @@ const updateOrderSchedule = async (
 };
 
 const getAllOrdersForAdmin = async (query: Record<string, unknown>) => {
-  const orderQuery = new QueryBuilder(Order.find(), query)
+  const filterQuery: Record<string, unknown> = { ...query };
+  if (!filterQuery.status) {
+    filterQuery.status = {
+      $nin: [ORDER_STATUS.CANCELLED, ORDER_STATUS.REFUNDED],
+    };
+  }
+
+  const orderQuery = new QueryBuilder(Order.find(), filterQuery)
     .filter()
     .sort()
     .paginate();

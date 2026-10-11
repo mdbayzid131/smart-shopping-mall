@@ -9,6 +9,7 @@ import { User } from '../user/user.model';
 import { ORDER_OUTCOME, ORDER_STATUS } from '../../../enums/order';
 import { emailHelper } from '../../../helpers/emailHelper';
 import { emailTemplate } from '../../../shared/emailTemplate';
+import { errorLogger } from '../../../shared/logger';
 import { deleteFromS3 } from '../../../helpers/s3Helper';
 import {
   invalidateProductListCache,
@@ -153,14 +154,18 @@ const createIssue = async (
   // Notify seller
   const seller = sellerId ? await User.findById(sellerId) : null;
   if (seller && seller.email) {
-    const emailData = emailTemplate.issueCreated({
-      email: seller.email,
-      productName: product?.name || 'Item',
-      issueType,
-      reason: effectiveReason,
-      refunded,
-    });
-    await emailHelper.sendEmail(emailData);
+    try {
+      const emailData = emailTemplate.issueCreated({
+        email: seller.email,
+        productName: product?.name || 'Item',
+        issueType,
+        reason: effectiveReason,
+        refunded,
+      });
+      await emailHelper.sendEmail(emailData);
+    } catch (emailErr) {
+      errorLogger.error('Failed to send issueCreated email:', emailErr);
+    }
   }
 
   return issue;
@@ -192,19 +197,16 @@ const resolveIssue = async (
   const watcherIds = await Wishlist.distinct('user', { product: product._id });
 
   if (action === 'delete') {
-    // Delete files from S3
-    const productImages = product.images?.length
-      ? product.images
-      : product.image
-        ? [product.image]
-        : [];
-    await Promise.all(productImages.map(image => deleteFromS3(image)));
-    if (product.proofOfPurchase) {
-      await deleteFromS3(product.proofOfPurchase);
-    }
+    // Soft-delete / Unlist product: update status to 'rejected' so it's permanently removed from active feeds and marketplace
+    await synchronizeProductStatusMutation(
+      Product.findByIdAndUpdate(product._id, {
+        $set: { status: 'rejected' },
+        $unset: { buyer: 1, reservationExpiresAt: 1 },
+      }),
+      { productId: product._id.toString(), status: 'rejected' },
+    );
 
-    // Delete product from DB
-    await Product.findByIdAndDelete(product._id);
+    // Clean up wishlist
     await Wishlist.deleteMany({ product: product._id });
     void Promise.all(
       watcherIds.map(watcherId =>
@@ -218,12 +220,16 @@ const resolveIssue = async (
 
     // Notify seller
     if (seller && seller.email) {
-      const emailData = emailTemplate.issueResolved({
-        email: seller.email,
-        productName: product.name,
-        action: 'delete',
-      });
-      await emailHelper.sendEmail(emailData);
+      try {
+        const emailData = emailTemplate.issueResolved({
+          email: seller.email,
+          productName: product.name,
+          action: 'delete',
+        });
+        await emailHelper.sendEmail(emailData);
+      } catch (emailErr) {
+        errorLogger.error('Failed to send issueResolved (delete) email:', emailErr);
+      }
     }
   } else if (action === 'make_available') {
     // Update product status and clear buyer
@@ -242,12 +248,16 @@ const resolveIssue = async (
 
     // Notify seller
     if (seller && seller.email) {
-      const emailData = emailTemplate.issueResolved({
-        email: seller.email,
-        productName: product.name,
-        action: 'make_available',
-      });
-      await emailHelper.sendEmail(emailData);
+      try {
+        const emailData = emailTemplate.issueResolved({
+          email: seller.email,
+          productName: product.name,
+          action: 'make_available',
+        });
+        await emailHelper.sendEmail(emailData);
+      } catch (emailErr) {
+        errorLogger.error('Failed to send issueResolved (make_available) email:', emailErr);
+      }
     }
   }
 
@@ -255,6 +265,14 @@ const resolveIssue = async (
   issue.resolved = true;
   await issue.save();
   if (order) {
+    if (order.status !== ORDER_STATUS.REFUNDED && order.status !== ORDER_STATUS.CANCELLED) {
+      order.status = ORDER_STATUS.REFUNDED;
+      order.statusHistory.push({
+        status: ORDER_STATUS.REFUNDED,
+        changedAt: new Date(),
+      });
+      await order.save();
+    }
     void NotificationEvent.issueResolved(issue._id.toString(), order);
   }
 

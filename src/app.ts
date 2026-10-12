@@ -38,7 +38,9 @@ app.use(
         !origin ||
         config.cors_origin.includes('*') ||
         config.cors_origin.includes(origin) ||
-        (config.api_public_url && origin === config.api_public_url)
+        (config.api_public_url && origin === config.api_public_url) ||
+        origin.endsWith('.vercel.app') ||
+        origin.includes('closete')
       ) {
         callback(null, true);
         return;

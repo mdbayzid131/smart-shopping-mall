@@ -73,7 +73,19 @@ const main = async () => {
   socketServer = new SocketServer(httpServer, {
     pingTimeout: 60_000,
     cors: {
-      origin: [...config.cors_origin],
+      origin: (origin, callback) => {
+        if (
+          !origin ||
+          config.cors_origin.includes('*') ||
+          config.cors_origin.includes(origin) ||
+          origin.endsWith('.vercel.app') ||
+          origin.includes('closete')
+        ) {
+          callback(null, true);
+        } else {
+          callback(new Error('Origin is not allowed by CORS'));
+        }
+      },
       credentials: true,
     },
   });

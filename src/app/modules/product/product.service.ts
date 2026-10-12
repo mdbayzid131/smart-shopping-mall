@@ -54,7 +54,7 @@ const createProductToDB = async (
     .sort({ orderId: -1 })
     .select('orderId')
     .lean();
-  const nextOrderId = lastProduct ? lastProduct.orderId + 1 : 1000; // Start from 1000 if no products exist
+  const nextOrderId = lastProduct?.orderId ? lastProduct.orderId + 1 : 1000; // Start from 1000 if no products exist
   payload.orderId = nextOrderId;
 
   // Calculate platform commission and seller earnings

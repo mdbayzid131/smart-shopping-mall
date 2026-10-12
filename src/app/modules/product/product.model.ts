@@ -62,7 +62,7 @@ const productSchema = new Schema<IProduct>(
     timestamps: true,
     toJSON: {
       virtuals: true,
-      transform: (_document, returned) => {
+      transform: (_document, returned: any) => {
         if (
           (!returned.images || returned.images.length === 0) &&
           returned.image
@@ -70,6 +70,14 @@ const productSchema = new Schema<IProduct>(
           returned.images = [returned.image];
         }
         delete returned.image;
+        delete returned.orderId;
+        return returned;
+      },
+    },
+    toObject: {
+      virtuals: true,
+      transform: (_document, returned: any) => {
+        delete returned.orderId;
         return returned;
       },
     },

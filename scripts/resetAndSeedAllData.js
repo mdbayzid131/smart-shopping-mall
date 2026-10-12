@@ -654,7 +654,7 @@ async function resetAndSeed() {
   const ordersDef = [
     // ── STAGE 0: RESERVED / AWAITING COLLECTION (2 orders) ──
     {
-      orderNumber: 'ORD-2026-101',
+      orderNumber: 'CLT-00002026101',
       product: pMap[1012]._id,
       buyer: costas._id,
       seller: fatima._id,
@@ -676,7 +676,7 @@ async function resetAndSeed() {
       },
     },
     {
-      orderNumber: 'ORD-2026-102',
+      orderNumber: 'CLT-00002026102',
       product: pMap[1013]._id,
       buyer: pronoy._id,
       seller: alex._id,
@@ -701,7 +701,7 @@ async function resetAndSeed() {
 
     // ── STAGE 1: COLLECTED (2 orders) ──
     {
-      orderNumber: 'ORD-2026-103',
+      orderNumber: 'CLT-00002026103',
       product: pMap[1014]._id,
       buyer: alex._id,
       seller: costas._id,
@@ -720,7 +720,7 @@ async function resetAndSeed() {
       },
     },
     {
-      orderNumber: 'ORD-2026-104',
+      orderNumber: 'CLT-00002026104',
       product: pMap[1015]._id,
       buyer: pronoy._id,
       seller: fatima._id,
@@ -741,7 +741,7 @@ async function resetAndSeed() {
 
     // ── STAGE 2: VERIFICATION / AUTHENTICATED (2 orders) ──
     {
-      orderNumber: 'ORD-2026-105',
+      orderNumber: 'CLT-00002026105',
       product: pMap[1016]._id,
       buyer: costas._id,
       seller: alex._id,
@@ -761,7 +761,7 @@ async function resetAndSeed() {
       },
     },
     {
-      orderNumber: 'ORD-2026-106',
+      orderNumber: 'CLT-00002026106',
       product: pMap[1017]._id,
       buyer: fatima._id,
       seller: pronoy._id,
@@ -783,7 +783,7 @@ async function resetAndSeed() {
 
     // ── STAGE 3: DISPATCHED / READY FOR DELIVERY (2 orders) ──
     {
-      orderNumber: 'ORD-2026-107',
+      orderNumber: 'CLT-00002026107',
       product: pMap[1018]._id,
       buyer: costas._id,
       seller: fatima._id,
@@ -805,7 +805,7 @@ async function resetAndSeed() {
       },
     },
     {
-      orderNumber: 'ORD-2026-108',
+      orderNumber: 'CLT-00002026108',
       product: pMap[1019]._id,
       buyer: pronoy._id,
       seller: costas._id,
@@ -829,7 +829,7 @@ async function resetAndSeed() {
 
     // ── STAGE 4: DELIVERED / COMPLETED (2 orders) ──
     {
-      orderNumber: 'ORD-2026-109',
+      orderNumber: 'CLT-00002026109',
       product: pMap[1020]._id,
       buyer: costas._id,
       seller: pronoy._id,
@@ -852,7 +852,7 @@ async function resetAndSeed() {
       },
     },
     {
-      orderNumber: 'ORD-2026-110',
+      orderNumber: 'CLT-00002026110',
       product: pMap[1021]._id,
       buyer: pronoy._id,
       seller: alex._id,
@@ -877,7 +877,7 @@ async function resetAndSeed() {
 
     // ── STAGE 5: ISSUES / CANCELLED / REFUNDED (2 orders) ──
     {
-      orderNumber: 'ORD-2026-111',
+      orderNumber: 'CLT-00002026111',
       product: pMap[1022]._id,
       buyer: costas._id,
       seller: fatima._id,
@@ -902,7 +902,7 @@ async function resetAndSeed() {
       },
     },
     {
-      orderNumber: 'ORD-2026-112',
+      orderNumber: 'CLT-00002026112',
       product: pMap[1023]._id,
       buyer: alex._id,
       seller: pronoy._id,
@@ -950,10 +950,14 @@ async function resetAndSeed() {
 
   // 5. SEED ISSUES (For Admin Dashboard Issues tab)
   console.log('\n⚠️ Seeding reported issues for Admin Dashboard Issues tab...');
+  const ord1022 = createdOrders.find(o => o.orderNumber === 'CLT-00002026111');
+  const ord1023 = createdOrders.find(o => o.orderNumber === 'CLT-00002026112');
+
   const issuesDef = [
     {
       product: pMap[1022]._id,
-      orderId: pMap[1022].orderId,
+      order: ord1022?._id,
+      orderNumber: ord1022?.orderNumber || 'CLT-00002026111',
       buyer: costas._id,
       seller: fatima._id,
       issueType: 'verification_failed',
@@ -966,7 +970,8 @@ async function resetAndSeed() {
     },
     {
       product: pMap[1023]._id,
-      orderId: pMap[1023].orderId,
+      order: ord1023?._id,
+      orderNumber: ord1023?.orderNumber || 'CLT-00002026112',
       buyer: alex._id,
       seller: pronoy._id,
       issueType: 'seller_unavailable',

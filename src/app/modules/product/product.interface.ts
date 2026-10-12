@@ -38,7 +38,7 @@ export interface IProduct {
   sellerPhone?: string;
   wishlistCount: number;
   seller: Types.ObjectId;
-  orderId: number;
+  orderId?: number;
   buyer?: Types.ObjectId;
   reservationExpiresAt?: Date;
 }

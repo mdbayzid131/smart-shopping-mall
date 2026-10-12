@@ -237,7 +237,6 @@ export const toAdminProduct = (product: any) => {
 
   return {
     _id: id,
-    orderId: value.orderId,
     name: value.name,
     brand: value.brand,
     description: value.description,

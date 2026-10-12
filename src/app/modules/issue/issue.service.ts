@@ -141,6 +141,8 @@ const createIssue = async (
 
   // Create issue
   const issue = await Issue.create({
+    order: order?._id,
+    orderNumber: order?.orderNumber,
     product: effectiveProductId || order?.product,
     buyer: buyerId,
     seller: sellerId,
@@ -282,25 +284,59 @@ const resolveIssue = async (
   return issue;
 };
 
+const sanitizeAndEnrichIssue = async (issue: any) => {
+  if (!issue) return issue;
+
+  // 1. Completely remove 4-digit orderId from response
+  delete issue.orderId;
+  if (issue.product && typeof issue.product === 'object') {
+    delete issue.product.orderId;
+  }
+
+  // 2. Ensure orderNumber is set
+  if (issue.order && typeof issue.order === 'object' && issue.order.orderNumber) {
+    issue.orderNumber = issue.orderNumber || issue.order.orderNumber;
+  }
+
+  if (!issue.orderNumber && issue.product) {
+    const prodId = issue.product._id || issue.product;
+    const matchedOrder = await Order.findOne({ product: prodId })
+      .sort({ createdAt: -1 })
+      .select('_id orderNumber');
+    if (matchedOrder) {
+      issue.order = issue.order || matchedOrder._id;
+      issue.orderNumber = matchedOrder.orderNumber;
+    }
+  }
+
+  return issue;
+};
+
 const getIssues = async () => {
-  return Issue.find()
+  const issues = await Issue.find()
     .sort({ createdAt: -1 })
+    .populate('order')
     .populate('product')
     .populate('seller')
     .populate('buyer')
-    .populate('admin');
+    .populate('admin')
+    .lean();
+
+  return Promise.all(issues.map(sanitizeAndEnrichIssue));
 };
 
 const getIssueById = async (issueId: string) => {
-  const issue = await Issue.findById(issueId)
+  const issue: any = await Issue.findById(issueId)
+    .populate('order')
     .populate('product')
     .populate('seller')
     .populate('buyer')
-    .populate('admin');
+    .populate('admin')
+    .lean();
   if (!issue) {
     throw new ApiError(StatusCodes.NOT_FOUND, 'Issue not found');
   }
-  return issue;
+  return sanitizeAndEnrichIssue(issue);
 };
 
 export const IssueService = {

@@ -5,6 +5,8 @@ import { ORDER_OUTCOME } from '../../../enums/order';
 
 const issueSchema = new Schema<IIssue>(
   {
+    order: { type: Schema.Types.ObjectId, ref: 'Order' },
+    orderNumber: { type: String },
     product: { type: Schema.Types.ObjectId, ref: 'Product', required: true },
     buyer: { type: Schema.Types.ObjectId, ref: 'User' },
     seller: { type: Schema.Types.ObjectId, ref: 'User', required: true },
@@ -22,7 +24,19 @@ const issueSchema = new Schema<IIssue>(
     admin: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     resolved: { type: Boolean, default: false },
   },
-  { timestamps: true },
+  {
+    timestamps: true,
+    toJSON: {
+      virtuals: true,
+      transform: (_document, returned: any) => {
+        delete returned.orderId;
+        if (returned.product && typeof returned.product === 'object') {
+          delete returned.product.orderId;
+        }
+        return returned;
+      },
+    },
+  },
 );
 
 issueSchema.index({ product: 1, resolved: 1 });

@@ -57,6 +57,10 @@ const apiRoutes = [
     path: '/notifications',
     route: NotificationRoutes,
   },
+  {
+    path: '/notification',
+    route: NotificationRoutes,
+  },
 ];
 
 apiRoutes.forEach(route => router.use(route.path, route.route));

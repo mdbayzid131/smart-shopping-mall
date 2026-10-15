@@ -93,6 +93,7 @@ const envSchema = z
     STRIPE_SECRET_KEY: z.string().min(1),
     WEBHOOK_SECRET: z.string().min(1),
     STRIPE_CURRENCY: z.string().length(3).default('aed'),
+    STRIPE_CONNECT_COUNTRY: z.string().length(2).default('US'),
     API_PUBLIC_URL: z.preprocess(
       val => val || process.env.RENDER_EXTERNAL_URL,
       z.string().url(),
@@ -217,7 +218,7 @@ export default {
     webhookSecret: env.WEBHOOK_SECRET,
     currency: env.STRIPE_CURRENCY.toLowerCase(),
     publicUrl: env.API_PUBLIC_URL.replace(/\/$/, ''),
-    connectCountry: 'AE',
+    connectCountry: env.STRIPE_CONNECT_COUNTRY,
   },
   firebase: {
     serviceAccount: firebaseServiceAccount,

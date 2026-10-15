@@ -110,21 +110,24 @@ export const detachPaymentMethod = async (paymentMethodId: string) =>
 export const createConnectedAccount = async (
   userId: string,
   email: string,
-) =>
-  stripeClient.accounts.create(
+) => {
+  const isAE = config.stripe.connectCountry === 'AE';
+  return stripeClient.accounts.create(
     {
       type: 'express',
       country: config.stripe.connectCountry,
       email,
-      business_type: 'individual',
-      capabilities: { transfers: { requested: true } },
-      tos_acceptance: { service_agreement: 'recipient' },
+      ...(!isAE ? { business_type: 'individual' } : {}),
+      capabilities: {
+        transfers: { requested: true },
+      },
       metadata: { appUserId: userId },
     },
     // Bump the version whenever the connected-account creation parameters
     // change so Stripe never replays an older request shape for this user.
-    { idempotencyKey: `stripe-connect-account:v4:${userId}` },
+    { idempotencyKey: `stripe-connect-account:v8:${userId}` },
   );
+};
 
 export const createConnectedAccountLink = async (
   accountId: string,

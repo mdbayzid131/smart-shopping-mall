@@ -17,6 +17,11 @@ router.get(
   auth(USER_ROLES.USER),
   PaymentController.connectStatus,
 );
+router.delete(
+  '/connect',
+  auth(USER_ROLES.USER),
+  PaymentController.disconnectAccount,
+);
 router.get('/connect/return', PaymentController.connectReturn);
 router.get('/connect/refresh', PaymentController.connectRefresh);
 

@@ -6,6 +6,7 @@ import {
   createConnectedAccount,
   createConnectedAccountLink,
   retrieveConnectedAccount,
+  stripeClient,
 } from '../../../integrations/stripe';
 import { errorLogger } from '../../../shared/logger';
 import { User } from '../user/user.model';
@@ -162,10 +163,7 @@ const onboardingLink = async (userId: string) => {
 
   if (accountId) {
     try {
-      const existingAccount = await retrieveConnectedAccount(accountId);
-      if (existingAccount.business_type !== 'individual') {
-        accountId = undefined;
-      }
+      await retrieveConnectedAccount(accountId);
     } catch (error: any) {
       if (error?.code === 'resource_missing' || error?.statusCode === 404) {
         accountId = undefined;
@@ -214,10 +212,32 @@ const refreshFromState = async (state: string) => {
   return onboardingLink(userId);
 };
 
+const disconnectAccount = async (userId: string) => {
+  const user = await User.findById(userId).select('+stripeAccountId');
+  if (!user) {
+    throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
+  }
+
+  if (user.stripeAccountId) {
+    try {
+      await stripeClient.accounts.del(user.stripeAccountId);
+    } catch (err: any) {
+      errorLogger.warn(`[STRIPE_CONNECT] Failed to delete Stripe account ${user.stripeAccountId}: ${err?.message}`);
+    }
+  }
+
+  await User.findByIdAndUpdate(userId, {
+    $unset: { stripeAccountId: 1 },
+  });
+
+  return { success: true, message: 'Payout account disconnected successfully' };
+};
+
 export const ConnectService = {
   onboardingLink,
   accountStatus,
   statusFromState,
   refreshFromState,
   assertPayoutReady,
+  disconnectAccount,
 };

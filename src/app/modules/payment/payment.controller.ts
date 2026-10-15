@@ -68,10 +68,16 @@ const connectRefresh = catchAsync(async (req: Request, res: Response) => {
   res.redirect(result.url);
 });
 
+const disconnectAccount = catchAsync(async (req: Request, res: Response) => {
+  const result = await ConnectService.disconnectAccount((req.user as JwtPayload).id);
+  res.status(StatusCodes.OK).json({ success: true, data: result });
+});
+
 export const PaymentController = {
   stripeWebhook,
   createOnboardingLink,
   connectStatus,
   connectReturn,
   connectRefresh,
+  disconnectAccount,
 };

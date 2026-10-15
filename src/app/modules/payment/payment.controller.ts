@@ -34,7 +34,8 @@ const stripeWebhook = catchAsync(async (req: Request, res: Response) => {
       });
       break;
     }
-    case 'payment_intent.payment_failed': {
+    case 'payment_intent.payment_failed':
+    case 'payment_intent.canceled': {
       const paymentIntent = event.data.object as { id: string };
       await OrderService.handlePaymentFailed(paymentIntent.id);
       break;

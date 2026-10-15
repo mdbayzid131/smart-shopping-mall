@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import mongoose from 'mongoose';
 import { StatusCodes } from 'http-status-codes';
 import { JwtPayload } from 'jsonwebtoken';
 import config from '../../../config';
@@ -64,6 +64,56 @@ const generateOrderNumber = () => {
   return `CLT-${Date.now().toString().slice(-8)}${random}`;
 };
 
+const syncBuyerProfileFromDelivery = async (
+  buyerId?: string,
+  deliveryDetails?: IDeliveryDetails,
+) => {
+  if (!buyerId || !deliveryDetails) return;
+  const buyerUpdate: Record<string, any> = {};
+  if (
+    deliveryDetails.phone &&
+    typeof deliveryDetails.phone === 'string' &&
+    deliveryDetails.phone.trim().length > 0
+  ) {
+    buyerUpdate.phone = deliveryDetails.phone.trim();
+    buyerUpdate.contact = deliveryDetails.phone.trim();
+  }
+  const buyerLocation = deliveryDetails.location || deliveryDetails.city;
+  if (
+    buyerLocation &&
+    typeof buyerLocation === 'string' &&
+    buyerLocation.trim().length > 0
+  ) {
+    buyerUpdate.location = buyerLocation.trim();
+  }
+  if (
+    deliveryDetails.country &&
+    typeof deliveryDetails.country === 'string' &&
+    deliveryDetails.country.trim().length > 0
+  ) {
+    buyerUpdate.country = deliveryDetails.country.trim();
+  }
+  if (
+    deliveryDetails.address &&
+    typeof deliveryDetails.address === 'string' &&
+    deliveryDetails.address.trim().length > 0
+  ) {
+    buyerUpdate.address = deliveryDetails.address.trim();
+  }
+  if (
+    deliveryDetails.name &&
+    typeof deliveryDetails.name === 'string' &&
+    deliveryDetails.name.trim().length > 0
+  ) {
+    buyerUpdate.name = deliveryDetails.name.trim();
+  }
+  if (Object.keys(buyerUpdate).length > 0) {
+    await User.findByIdAndUpdate(buyerId, { $set: buyerUpdate }).catch(
+      () => undefined,
+    );
+  }
+};
+
 const checkoutOrder = async (
   productId: string,
   buyerId: string,
@@ -75,17 +125,145 @@ const checkoutOrder = async (
     throw new ApiError(StatusCodes.NOT_FOUND, 'Product not found');
   }
 
-  if (product.status !== 'live' && product.status !== 'available') {
-    throw new ApiError(
-      StatusCodes.BAD_REQUEST,
-      'This item is no longer available',
-    );
-  }
-
   if (product.seller.toString() === buyerId) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
       'You cannot buy your own listing',
+    );
+  }
+
+  const now = new Date();
+
+  // 1. If product is reserved but reservation window has passed, auto-release it
+  if (
+    product.status === 'reserved' &&
+    product.reservationExpiresAt &&
+    new Date(product.reservationExpiresAt) <= now
+  ) {
+    await Order.updateMany(
+      {
+        product: product._id,
+        status: ORDER_STATUS.PENDING_PAYMENT,
+      },
+      {
+        $set: { status: ORDER_STATUS.CANCELLED },
+        $push: {
+          statusHistory: {
+            status: ORDER_STATUS.CANCELLED,
+            note: 'Reservation expired; released for new checkout',
+            changedAt: now,
+          },
+        },
+      },
+    );
+    product.status = 'live';
+    product.buyer = undefined;
+    product.reservationExpiresAt = undefined;
+    await synchronizeProductStatusMutation(
+      Product.findByIdAndUpdate(
+        product._id,
+        {
+          $set: { status: 'live' },
+          $unset: { buyer: 1, reservationExpiresAt: 1 },
+        },
+        { new: true },
+      ),
+      { productId: product._id.toString(), status: 'live' },
+    );
+  }
+
+  // 2. If product is currently reserved:
+  if (product.status === 'reserved') {
+    // If reserved by the SAME buyer -> Re-entrant checkout! Reuse/refresh existing pending order
+    if (product.buyer?.toString() === buyerId) {
+      const existingOrder = await Order.findOne({
+        product: product._id,
+        buyer: buyerId,
+        status: ORDER_STATUS.PENDING_PAYMENT,
+      }).sort({ createdAt: -1 });
+
+      if (existingOrder) {
+        let paymentIntent: any;
+        if (existingOrder.payment?.paymentIntentId) {
+          try {
+            paymentIntent = await stripeClient.paymentIntents.retrieve(
+              existingOrder.payment.paymentIntentId,
+            );
+          } catch (e) {
+            logger.warn('Failed to retrieve existing payment intent for re-entrant checkout', e);
+          }
+        }
+
+        const newExpiry = new Date(Date.now() + 15 * 60 * 1000);
+
+        // If existing PaymentIntent is still valid and uncompleted
+        if (
+          paymentIntent &&
+          paymentIntent.status !== 'canceled' &&
+          paymentIntent.status !== 'succeeded'
+        ) {
+          await Product.findByIdAndUpdate(product._id, {
+            $set: { reservationExpiresAt: newExpiry },
+          });
+
+          if (deliveryDetails) {
+            existingOrder.deliveryDetails = deliveryDetails;
+          }
+          if (note !== undefined) {
+            existingOrder.note = note.trim();
+          }
+          await existingOrder.save();
+
+          await syncBuyerProfileFromDelivery(buyerId, deliveryDetails);
+
+          return { order: existingOrder, clientSecret: paymentIntent.client_secret };
+        }
+
+        // If PaymentIntent was canceled or failed, create a fresh PaymentIntent for the same order
+        const customerId = await PaymentMethodService.getOrCreateCustomerId(buyerId);
+        const refreshedPaymentIntent = await createPaymentIntent(
+          product.price,
+          {
+            orderNumber: existingOrder.orderNumber,
+            productId: String(product._id),
+            buyerId,
+          },
+          `checkout:${existingOrder.orderNumber}:${Date.now()}`,
+          customerId,
+        );
+
+        existingOrder.payment = {
+          provider: 'stripe',
+          paymentIntentId: refreshedPaymentIntent.id,
+          status: PAYMENT_STATUS.PENDING,
+        };
+        if (deliveryDetails) {
+          existingOrder.deliveryDetails = deliveryDetails;
+        }
+        if (note !== undefined) {
+          existingOrder.note = note.trim();
+        }
+        await existingOrder.save();
+
+        await Product.findByIdAndUpdate(product._id, {
+          $set: { reservationExpiresAt: newExpiry },
+        });
+
+        await syncBuyerProfileFromDelivery(buyerId, deliveryDetails);
+
+        return { order: existingOrder, clientSecret: refreshedPaymentIntent.client_secret };
+      }
+    }
+
+    // Reserved by a DIFFERENT buyer
+    throw new ApiError(StatusCodes.CONFLICT, 'This item is being purchased');
+  }
+
+  // 3. If product is neither live nor available
+  if (product.status !== 'live' && product.status !== 'available') {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      'This item is no longer available',
     );
   }
 
@@ -153,52 +331,7 @@ const checkoutOrder = async (
       ],
     });
 
-    // Auto-sync buyer profile info (phone, location/city, country, address, name) in DB
-    if (buyerId && deliveryDetails) {
-      const buyerUpdate: Record<string, any> = {};
-      if (
-        deliveryDetails.phone &&
-        typeof deliveryDetails.phone === 'string' &&
-        deliveryDetails.phone.trim().length > 0
-      ) {
-        buyerUpdate.phone = deliveryDetails.phone.trim();
-        buyerUpdate.contact = deliveryDetails.phone.trim();
-      }
-      const buyerLocation = deliveryDetails.location || deliveryDetails.city;
-      if (
-        buyerLocation &&
-        typeof buyerLocation === 'string' &&
-        buyerLocation.trim().length > 0
-      ) {
-        buyerUpdate.location = buyerLocation.trim();
-      }
-      if (
-        deliveryDetails.country &&
-        typeof deliveryDetails.country === 'string' &&
-        deliveryDetails.country.trim().length > 0
-      ) {
-        buyerUpdate.country = deliveryDetails.country.trim();
-      }
-      if (
-        deliveryDetails.address &&
-        typeof deliveryDetails.address === 'string' &&
-        deliveryDetails.address.trim().length > 0
-      ) {
-        buyerUpdate.address = deliveryDetails.address.trim();
-      }
-      if (
-        deliveryDetails.name &&
-        typeof deliveryDetails.name === 'string' &&
-        deliveryDetails.name.trim().length > 0
-      ) {
-        buyerUpdate.name = deliveryDetails.name.trim();
-      }
-      if (Object.keys(buyerUpdate).length > 0) {
-        await User.findByIdAndUpdate(buyerId, { $set: buyerUpdate }).catch(
-          () => undefined,
-        );
-      }
-    }
+    await syncBuyerProfileFromDelivery(buyerId, deliveryDetails);
 
     return { order, clientSecret: paymentIntent.client_secret };
   } catch (error) {
@@ -377,6 +510,14 @@ const handlePaymentFailed = async (paymentIntentId: string) => {
   }
 
   order.payment.status = PAYMENT_STATUS.FAILED;
+  if (order.status === ORDER_STATUS.PENDING_PAYMENT) {
+    order.status = ORDER_STATUS.CANCELLED;
+    order.statusHistory.push({
+      status: ORDER_STATUS.CANCELLED,
+      note: 'Payment failed on Stripe',
+      changedAt: new Date(),
+    });
+  }
   await order.save();
   await synchronizeProductStatusMutation(
     Product.findOneAndUpdate(
@@ -1095,9 +1236,39 @@ const reportMissedCollection = async (
   return { order, cancelled: true, attemptsRemaining: 0 };
 };
 
-const cancelOrder = async (orderId: string, buyerId: string) => {
-  const order = await Order.findById(orderId);
+const cancelOrder = async (orderIdOrProductId: string, buyerId: string) => {
+  let order = mongoose.isValidObjectId(orderIdOrProductId)
+    ? await Order.findById(orderIdOrProductId)
+    : null;
+
+  if (!order && mongoose.isValidObjectId(orderIdOrProductId)) {
+    order = await Order.findOne({
+      product: orderIdOrProductId,
+      buyer: buyerId,
+      status: ORDER_STATUS.PENDING_PAYMENT,
+    }).sort({ createdAt: -1 });
+  }
+
   if (!order) {
+    if (mongoose.isValidObjectId(orderIdOrProductId)) {
+      const reservedProduct = await synchronizeProductStatusMutation(
+        Product.findOneAndUpdate(
+          { _id: orderIdOrProductId, buyer: buyerId, status: 'reserved' },
+          {
+            $set: { status: 'live' },
+            $unset: { buyer: 1, reservationExpiresAt: 1 },
+          },
+          { new: true },
+        ),
+        {
+          productId: orderIdOrProductId.toString(),
+          status: 'live',
+        },
+      );
+      if (reservedProduct) {
+        return { cancelled: true, message: 'Checkout reservation released' } as any;
+      }
+    }
     throw new ApiError(StatusCodes.NOT_FOUND, 'Order not found');
   }
 
@@ -1260,6 +1431,25 @@ const expirePendingOrders = async () => {
       order.product.toString(),
       true,
       `${order._id.toString()}:expired`,
+    );
+  }
+
+  // Also clean up any orphaned reserved products where reservationExpiresAt has passed
+  const expiredProducts = await Product.find({
+    status: 'reserved',
+    reservationExpiresAt: { $lte: new Date() },
+  });
+  for (const expProd of expiredProducts) {
+    await synchronizeProductStatusMutation(
+      Product.findByIdAndUpdate(
+        expProd._id,
+        {
+          $set: { status: 'live' },
+          $unset: { buyer: 1, reservationExpiresAt: 1 },
+        },
+        { new: true },
+      ),
+      { productId: expProd._id.toString(), status: 'live' },
     );
   }
 };

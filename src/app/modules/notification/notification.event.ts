@@ -4,6 +4,8 @@ import { NOTIFICATION_TYPE } from '../../../enums/notification';
 import { NotificationService } from './notification.service';
 import { Product } from '../product/product.model';
 import { Wishlist } from '../wishlist/wishlist.model';
+import { User } from '../user/user.model';
+import { USER_ROLES } from '../../../enums/user';
 import { errorLogger } from '../../../shared/logger';
 
 type OrderNotificationContext = {
@@ -101,15 +103,70 @@ const notifyOrderParties = async (
   await Promise.all(promises);
 };
 
-const itemListed = async (sellerId: string, productId: string) =>
-  NotificationService.safeCreateNotification({
-    recipientId: sellerId,
-    type: NOTIFICATION_TYPE.ITEM_UNDER_REVIEW,
-    title: 'Item under review',
-    body: 'Your listing is under review by the Closeté team and will be published shortly.',
-    eventKey: `product:${productId}:under-review:${Date.now()}`,
-    data: { screen: 'my_listings', productId, status: 'pending_review' },
-  });
+const notifyAdmins = async (payload: {
+  type: NOTIFICATION_TYPE;
+  title: string;
+  body: string;
+  eventKey: string;
+  data?: Record<string, any>;
+}) => {
+  try {
+    const admins = await User.find({
+      role: { $in: [USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN] },
+      status: { $ne: 'deleted' },
+    }).select('_id');
+
+    await Promise.all(
+      admins.map(admin =>
+        NotificationService.safeCreateNotification({
+          recipientId: admin._id.toString(),
+          type: payload.type,
+          title: payload.title,
+          body: payload.body,
+          eventKey: `${payload.eventKey}:${admin._id}`,
+          data: payload.data,
+        }),
+      ),
+    );
+  } catch (err) {
+    errorLogger.error('Failed to notify admins:', err);
+  }
+};
+
+const itemListed = async (sellerId: string, productId: string) => {
+  const promises: Promise<any>[] = [
+    NotificationService.safeCreateNotification({
+      recipientId: sellerId,
+      type: NOTIFICATION_TYPE.ITEM_UNDER_REVIEW,
+      title: 'Item under review',
+      body: 'Your listing is under review by the Closeté team and will be published shortly.',
+      eventKey: `product:${productId}:under-review:${Date.now()}`,
+      data: { screen: 'my_listings', productId, status: 'pending_review' },
+    }),
+  ];
+
+  try {
+    const product = await Product.findById(productId).select('name brand price');
+    const itemTitle = product?.name || 'A new listing';
+    promises.push(
+      notifyAdmins({
+        type: NOTIFICATION_TYPE.ITEM_UNDER_REVIEW,
+        title: 'New Listing Pending Review',
+        body: `"${itemTitle}" was submitted and is waiting for review.`,
+        eventKey: `admin:product:${productId}:review:${Date.now()}`,
+        data: {
+          screen: 'pending_review',
+          productId,
+          link: '/pending-review',
+        },
+      }),
+    );
+  } catch (e) {
+    // ignore
+  }
+
+  await Promise.all(promises);
+};
 
 const paymentSucceeded = async (order: OrderNotificationContext) => {
   const key = `order:${idOf(order._id)}:payment-succeeded`;
@@ -134,6 +191,17 @@ const paymentSucceeded = async (order: OrderNotificationContext) => {
       body: `The ${product.name} has been purchased for ${displayPrice}. We’ll contact you shortly to arrange collection.`,
       eventKey: key,
       data: sellerOrderData(order),
+    }),
+    notifyAdmins({
+      type: NOTIFICATION_TYPE.ORDER_SECURED,
+      title: 'New Order Received',
+      body: `Order #${order.orderNumber} placed for "${product.name}".`,
+      eventKey: `admin:order:${idOf(order._id)}:secured:${Date.now()}`,
+      data: {
+        screen: 'orders',
+        orderId: idOf(order._id),
+        link: '/all-orders',
+      },
     }),
   ]);
 };
@@ -406,14 +474,29 @@ const orderScheduleUpdated = async (
 const issueCreated = async (
   issueId: string,
   order: OrderNotificationContext,
-) =>
-  notifyOrderParties(
-    order,
-    NOTIFICATION_TYPE.ISSUE_CREATED,
-    'Issue reported',
-    `An issue was reported for order ${order.orderNumber}.`,
-    `issue:${issueId}:created`,
-  );
+) => {
+  await Promise.all([
+    notifyOrderParties(
+      order,
+      NOTIFICATION_TYPE.ISSUE_CREATED,
+      'Issue reported',
+      `An issue was reported for order ${order.orderNumber}.`,
+      `issue:${issueId}:created`,
+    ),
+    notifyAdmins({
+      type: NOTIFICATION_TYPE.ISSUE_CREATED,
+      title: 'New Issue Reported',
+      body: `An issue was opened for order #${order.orderNumber}.`,
+      eventKey: `admin:issue:${issueId}:created:${Date.now()}`,
+      data: {
+        screen: 'issues',
+        issueId,
+        orderId: idOf(order._id),
+        link: '/issues',
+      },
+    }),
+  ]);
+};
 
 const issueResolved = async (
   issueId: string,

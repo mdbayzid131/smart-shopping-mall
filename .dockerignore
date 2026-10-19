@@ -2,8 +2,12 @@ node_modules
 dist
 .git
 .env
+.claude
 uploads
 winston
 tmp_test
 *.log
 test-*
+*.md
+tests
+scripts

@@ -1,5 +1,6 @@
 FROM node:22-alpine AS build
 WORKDIR /app
+RUN apk add --no-cache python3 make g++
 COPY package*.json ./
 RUN npm ci
 COPY tsconfig.json ./
@@ -13,7 +14,7 @@ RUN addgroup -S app && adduser -S app -G app
 COPY --from=build --chown=app:app /app/node_modules ./node_modules
 COPY --from=build --chown=app:app /app/dist ./dist
 COPY --chown=app:app package.json ./
-RUN mkdir -p uploads/image winston && chown -R app:app uploads winston
+RUN mkdir -p uploads winston && chown -R app:app uploads winston
 USER app
 EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \

@@ -16,4 +16,3 @@ services:
     volumes:
       - ./.env:/app/.env:ro
       - ./uploads:/app/uploads
-      - ./winston:/app/winston

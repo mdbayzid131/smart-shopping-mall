@@ -204,9 +204,7 @@ const getAllProductsFromDB = async (
     cacheKey,
     PRODUCT_LIST_CACHE_TTL_MS,
     async () => {
-      // Keep the exclusion in a separate $and clause so a caller-provided
-      // seller filter cannot overwrite it through QueryBuilder.filter().
-      // Do not exclude when explicitly viewing that seller's products.
+      // The home feed includes the viewer's own live listings.
       const viewerFilter = queryWithDefaults.seller
         ? {}
         : buildProductFeedViewerFilter(viewerId);

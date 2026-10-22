@@ -6,12 +6,10 @@ const {
   buildProductFeedViewerFilter,
 } = require('../dist/app/modules/product/product-feed.util.js');
 
-test('authenticated product feeds exclude the viewer as seller', () => {
+test('authenticated product feeds include the viewer as seller', () => {
   const filter = buildProductFeedViewerFilter('viewer-1');
 
-  assert.deepEqual(filter, {
-    $and: [{ seller: { $ne: 'viewer-1' } }],
-  });
+  assert.deepEqual(filter, {});
   assert.deepEqual(buildProductFeedViewerFilter(), {});
 });
 

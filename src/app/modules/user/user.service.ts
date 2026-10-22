@@ -212,7 +212,8 @@ const getProfileStatsFromDB = async (userId: string) => {
     throw new ApiError(StatusCodes.NOT_FOUND, 'User profile not found');
   }
 
-  const [totalProductsListed, totalProductsPurchased, earnings] =
+  const completedStatuses = [ORDER_STATUS.DELIVERED, ORDER_STATUS.COMPLETED];
+  const [totalProductsListed, totalProductsPurchased, sales, closet] =
     await Promise.all([
       Product.countDocuments({ seller: userId }),
       Order.countDocuments({
@@ -222,27 +223,36 @@ const getProfileStatsFromDB = async (userId: string) => {
           $nin: [ORDER_STATUS.CANCELLED, ORDER_STATUS.REFUNDED],
         },
       }),
-      Order.aggregate<{ totalEarnings: number }>([
+      Order.aggregate<{ totalEarnings: number; totalProductsSold: number; totalSalesValue: number }>([
         {
           $match: {
             seller: user._id,
-            payoutStatus: PAYOUT_STATUS.PAID,
+            'payment.status': PAYMENT_STATUS.PAID,
+            status: { $nin: [ORDER_STATUS.CANCELLED, ORDER_STATUS.REFUNDED] },
           },
         },
         {
           $group: {
             _id: null,
-            totalEarnings: { $sum: '$sellerPayout' },
+            totalProductsSold: { $sum: { $cond: [{ $in: ['$status', completedStatuses] }, 1, 0] } },
+            totalSalesValue: { $sum: { $cond: [{ $in: ['$status', completedStatuses] }, '$price', 0] } },
+            totalEarnings: { $sum: { $cond: [{ $eq: ['$payoutStatus', PAYOUT_STATUS.PAID] }, '$sellerPayout', 0] } },
           },
         },
-        { $project: { _id: 0, totalEarnings: 1 } },
+      ]),
+      Product.aggregate<{ closetValue: number }>([
+        { $match: { seller: user._id, status: { $in: ['live', 'available'] } } },
+        { $group: { _id: null, closetValue: { $sum: '$price' } } },
       ]),
     ]);
 
   return {
     totalProductsListed,
     totalProductsPurchased,
-    totalEarnings: Number((earnings[0]?.totalEarnings ?? 0).toFixed(2)),
+    totalProductsSold: sales[0]?.totalProductsSold ?? 0,
+    closetValue: Number((closet[0]?.closetValue ?? 0).toFixed(2)),
+    totalSalesValue: Number((sales[0]?.totalSalesValue ?? 0).toFixed(2)),
+    totalEarnings: Number((sales[0]?.totalEarnings ?? 0).toFixed(2)),
     currency: config.stripe.currency.toUpperCase(),
   };
 };

@@ -1157,8 +1157,12 @@ enum UserStatus { active, ban }
 **Profile header stats** (itemsListed, purchasesCount, closetValue):
 - Load the signed-in user's statistics from `GET /user/profile/stats`.
 - Load another user's public statistics from `GET /user/profile/stats/:userId`.
-- Response fields are `totalProductsListed`, `totalProductsPurchased`, `totalEarnings`, and `currency`.
-- `totalProductsPurchased` counts paid, non-cancelled/non-refunded orders. `totalEarnings` includes only seller payouts marked paid and uses the stored post-fee `sellerPayout` amount.
+- Response fields are `totalProductsListed`, `totalProductsPurchased`, `totalProductsSold`, `closetValue`, `totalSalesValue`, `totalEarnings`, and `currency`.
+- `totalProductsListed` counts the user's posted product records, including sold listings. `totalProductsPurchased` counts paid, non-cancelled/non-refunded purchases.
+- `totalProductsSold` counts paid sales delivered/completed successfully. `totalSalesValue` sums those orders' sale prices, regardless of whether the seller payout has arrived.
+- **Closet Value** uses `closetValue`: the sum of current `live`/`available` listing prices. Pending review, rejected, reserved, in-transit and sold products are excluded. This is a monetary amount, not the number sold or the seller's earnings.
+- `totalEarnings` remains separate: actual paid seller payouts, using the stored post-fee `sellerPayout` amount and excluding cancelled/refunded orders. Never display it under Closet Value.
+- The public seller header's **Items Sold** uses `totalProductsSold`, not that seller's purchases. Both profile headers use the same `closetValue` field. Zero is authoritative; do not replace it with a paginated list length.
 
 ### 8.8 Issues / Disputes (Admin-only in backend)
 

@@ -19,7 +19,8 @@ test('order progress exposes stable UI states', () => {
     [
       ['reserved', 'completed'],
       ['collected', 'completed'],
-      ['verified', 'current'],
+      ['authenticated', 'current'],
+      ['dispatched', 'pending'],
       ['delivered', 'pending'],
     ],
   );

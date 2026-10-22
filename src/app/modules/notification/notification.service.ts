@@ -11,6 +11,7 @@ import {
   INotification,
 } from './notification.interface';
 import { Notification } from './notification.model';
+import { buildNotificationPush } from './notification-push.util';
 
 const PUSH_REGISTRATION_MAX_AGE_MS = 35 * 24 * 60 * 60 * 1000;
 const PUSH_BATCH_SIZE = 500;
@@ -41,7 +42,7 @@ export const toNotificationDto = (
 
 const sendPushNotification = async (
   recipientId: string,
-  notification: ReturnType<typeof toNotificationDto>,
+  notification?: ReturnType<typeof toNotificationDto>,
 ) => {
   const messaging = getFirebaseMessaging();
   if (!messaging) return;
@@ -59,23 +60,10 @@ const sendPushNotification = async (
   for (let index = 0; index < registrations.length; index += PUSH_BATCH_SIZE) {
     const batch = registrations.slice(index, index + PUSH_BATCH_SIZE);
     const tokens = batch.map(item => item.registrationToken);
-    const response = await messaging.sendEachForMulticast({
-      tokens,
-      notification: {
-        title: notification.title,
-        body: notification.body,
-      },
-      data: {
-        ...notification.data,
-        notificationId: notification.id,
-        type: notification.type,
-      },
-      android: {
-        priority: 'high',
-        notification: { channelId: 'closete_updates', sound: 'default' },
-      },
-      apns: { payload: { aps: { sound: 'default' } } },
-    });
+    const unreadCount = await Notification.countDocuments({ recipient: recipientId, readAt: null });
+    const response = await messaging.sendEachForMulticast(
+      buildNotificationPush(tokens, unreadCount, notification),
+    );
 
     const invalidTokens = response.responses.flatMap((item, responseIndex) => {
       const code = item.error?.code;
@@ -179,6 +167,7 @@ const markAsRead = async (userId: string, notificationId: string) => {
   if (!notification) {
     throw new ApiError(StatusCodes.NOT_FOUND, 'Notification not found');
   }
+  syncNotificationBadges(userId);
   return toNotificationDto(notification);
 };
 
@@ -187,6 +176,7 @@ const markAllAsRead = async (userId: string) => {
     { recipient: userId, readAt: null },
     { $set: { readAt: new Date() } },
   );
+  syncNotificationBadges(userId);
   return { updatedCount: result.modifiedCount };
 };
 
@@ -200,6 +190,7 @@ const deleteNotification = async (userId: string, notificationId: string) => {
     throw new ApiError(StatusCodes.NOT_FOUND, 'Notification not found');
   }
   const result = { deletedNotificationId: String(notification._id) };
+  syncNotificationBadges(userId);
   socketHelper.emitToUser(userId, 'notification:deleted', {
     id: result.deletedNotificationId,
     wasUnread: !notification.readAt,
@@ -209,7 +200,14 @@ const deleteNotification = async (userId: string, notificationId: string) => {
 
 const deleteAllNotifications = async (userId: string) => {
   const result = await Notification.deleteMany({ recipient: userId });
+  syncNotificationBadges(userId);
   return { deletedCount: result.deletedCount };
+};
+
+const syncNotificationBadges = (userId: string) => {
+  void sendPushNotification(userId).catch(error => {
+    errorLogger.error(`[FCM] Badge sync failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  });
 };
 
 const registerDevice = async (

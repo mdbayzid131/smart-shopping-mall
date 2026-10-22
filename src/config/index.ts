@@ -96,6 +96,7 @@ const envSchema = z
       val => val || process.env.RENDER_EXTERNAL_URL,
       z.string().url(),
     ),
+    ENABLE_APP_REVIEW_OTP: z.enum(['true', 'false']).default('false'),
     TEST_FIXED_OTP_EMAIL: z.preprocess(
       emptyStringToUndefined,
       z.string().trim().email().optional(),
@@ -144,6 +145,21 @@ const envSchema = z
       });
     }
     const fixedOtpValues = [env.TEST_FIXED_OTP_EMAIL, env.TEST_FIXED_OTP_CODE];
+    if (env.ENABLE_APP_REVIEW_OTP === 'true' && !fixedOtpValues.every(Boolean)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'App review OTP requires a configured email and five-digit code',
+        path: ['ENABLE_APP_REVIEW_OTP'],
+      });
+    }
+    if (env.NODE_ENV === 'production' && fixedOtpValues.some(Boolean) &&
+        env.ENABLE_APP_REVIEW_OTP !== 'true') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Fixed test OTP credentials cannot be enabled in production without ENABLE_APP_REVIEW_OTP=true',
+        path: ['TEST_FIXED_OTP_EMAIL'],
+      });
+    }
     if (fixedOtpValues.some(Boolean) && !fixedOtpValues.every(Boolean)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

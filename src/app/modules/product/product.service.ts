@@ -10,6 +10,7 @@ import { uploadToS3, deleteFromS3 } from '../../../helpers/s3Helper';
 import { cache } from '../../../helpers/cache';
 import fs from 'fs';
 import { ConnectService } from '../payment/connect.service';
+import { buildConfirmedOrderFilter } from '../order/order-history.util';
 import {
   buildProductFeedCacheDiscriminator,
   buildProductFeedViewerFilter,
@@ -227,10 +228,10 @@ const getAllProductsFromDB = async (
 
       if (queryWithDefaults.seller) {
         const productIds = result.map((p: any) => p._id);
-        const activeOrders = await Order.find({
+        const activeOrders = await Order.find(buildConfirmedOrderFilter({
           product: { $in: productIds },
           status: { $nin: ['cancelled', 'refunded'] },
-        }).select('product status').lean();
+        })).select('product status').lean();
 
         const orderStatusByProductId = new Map<string, string>();
         for (const ord of activeOrders) {
@@ -364,9 +365,9 @@ const getMyProductsFromDB = async (
   ]);
 
   const productIds = result.map((p: any) => p._id);
-  const latestOrders = await Order.find({
+  const latestOrders = await Order.find(buildConfirmedOrderFilter({
     product: { $in: productIds },
-  })
+  }))
     .sort({ createdAt: -1 })
     .select('product status cancellationReason outcome note')
     .lean();
@@ -417,9 +418,9 @@ const getProductDetailsFromDB = async (id: string) => {
       throw new ApiError(StatusCodes.NOT_FOUND, 'Product not found');
     }
 
-    const latestOrder = await Order.findOne({
+    const latestOrder = await Order.findOne(buildConfirmedOrderFilter({
       product: id,
-    })
+    }))
       .sort({ createdAt: -1 })
       .populate('buyer', 'name image avatar contact phone location country address')
       .lean();

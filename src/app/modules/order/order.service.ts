@@ -1,3 +1,4 @@
+import { buildConfirmedOrderFilter } from './order-history.util';
 import mongoose from 'mongoose';
 import { StatusCodes } from 'http-status-codes';
 import { JwtPayload } from 'jsonwebtoken';
@@ -644,7 +645,12 @@ const getMyOrders = async (
   role: 'buyer' | 'seller',
   query: Record<string, unknown>,
 ) => {
-  const filter = role === 'seller' ? { seller: userId } : { buyer: userId };
+  const owner = role === 'seller' ? { seller: userId } : { buyer: userId };
+  // Reconcile successful wallet payments before hiding unfinished attempts.
+  const pending = await Order.find({ ...owner, status: ORDER_STATUS.PENDING_PAYMENT })
+    .sort({ createdAt: -1 }).limit(20).lean();
+  for (const order of pending) await reconcilePendingOrder(order);
+  const filter = buildConfirmedOrderFilter(owner);
 
   const orderQuery = new QueryBuilder(Order.find(filter), query)
     .sort()
@@ -658,44 +664,7 @@ const getMyOrders = async (
     orderQuery.getPaginationInfo(),
   ]);
 
-  let result: any[] = (rawResult as any[]) || [];
-
-  // Auto-reconcile any pending orders that may have already succeeded in Stripe
-  const pendingOrders = (result || []).filter(
-    (o: any) =>
-      o.status === ORDER_STATUS.PENDING_PAYMENT && o.payment?.paymentIntentId,
-  );
-  if (pendingOrders.length > 0) {
-    let reconciledCount = 0;
-    for (const pendingOrder of pendingOrders) {
-      try {
-        const pi = await stripeClient.paymentIntents.retrieve(
-          pendingOrder.payment.paymentIntentId,
-        );
-        if (pi.status === 'succeeded') {
-          await handlePaymentSucceeded({
-            id: pi.id,
-            amountReceived: pi.amount_received,
-            currency: pi.currency,
-            metadata: pi.metadata,
-          });
-          reconciledCount++;
-        }
-      } catch (err) {
-        logger.warn('Failed auto-reconciling pending order in getMyOrders', err);
-      }
-    }
-
-    if (reconciledCount > 0) {
-      result = await Order.find(filter)
-        .sort(orderQuery.modelQuery.getOptions().sort || { createdAt: -1 })
-        .skip(orderQuery.modelQuery.getOptions().skip || 0)
-        .limit(orderQuery.modelQuery.getOptions().limit || 10)
-        .select('_id orderNumber status price product payment createdAt updatedAt')
-        .populate('product', '_id name brand price images status')
-        .lean();
-    }
-  }
+  const result = rawResult || [];
 
   return { result: (result || []).map(toOrderListItem), meta };
 };
@@ -1331,15 +1300,6 @@ const cancelOrder = async (orderIdOrProductId: string, buyerId: string) => {
       ),
       { productId: cancelled.product.toString(), status: 'live' },
     );
-    void NotificationEvent.orderStatusChanged(
-      cancelled,
-      ORDER_STATUS.CANCELLED,
-    );
-    void NotificationEvent.wishlistAvailabilityChanged(
-      cancelled.product.toString(),
-      true,
-      `${cancelled._id.toString()}:cancelled`,
-    );
     return cancelled;
   }
 
@@ -1429,12 +1389,6 @@ const expirePendingOrders = async () => {
         },
       ),
       { productId: order.product.toString(), status: 'live' },
-    );
-    void NotificationEvent.orderStatusChanged(order, ORDER_STATUS.CANCELLED);
-    void NotificationEvent.wishlistAvailabilityChanged(
-      order.product.toString(),
-      true,
-      `${order._id.toString()}:expired`,
     );
   }
 

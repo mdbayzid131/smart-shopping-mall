@@ -129,6 +129,7 @@ const userSchema = new Schema<IUser, UserModal>(
       sparse: true,
       select: false,
     },
+    stripePayoutNotifiedAccountId: { type: String, select: false },
     stripeCustomerId: {
       type: String,
       unique: true,

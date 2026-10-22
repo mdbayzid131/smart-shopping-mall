@@ -11,6 +11,7 @@ import {
 import { errorLogger } from '../../../shared/logger';
 import { User } from '../user/user.model';
 import { NotificationEvent } from '../notification/notification.event';
+import { Notification } from '../notification/notification.model';
 
 type IStripeErrorDetails = {
   code?: unknown;
@@ -94,7 +95,7 @@ const accountStatus = async (userId: string) => {
     _id: userId,
     status: 'active',
     verified: true,
-  }).select('+stripeAccountId');
+  }).select('+stripeAccountId +stripePayoutNotifiedAccountId');
   if (!user) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
@@ -124,7 +125,38 @@ const accountStatus = async (userId: string) => {
     return throwConnectProviderError('retrieve account', error);
   }
   if (account.details_submitted && account.payouts_enabled) {
-    void NotificationEvent.sellerPayoutConnected(userId);
+    try {
+      // Claim once per account, even if its notification is later deleted.
+      const claim = await User.updateOne(
+        {
+          _id: userId,
+          stripeAccountId: account.id,
+          stripePayoutNotifiedAccountId: { $ne: account.id },
+        },
+        { $set: { stripePayoutNotifiedAccountId: account.id } },
+      );
+      if (claim.modifiedCount) {
+        try {
+          // Preserve the previous version's notification when upgrading.
+          const alreadyNotified = !user.stripePayoutNotifiedAccountId &&
+            await Notification.exists({
+              recipient: userId,
+              eventKey: `seller:${userId}:payout-connected`,
+            });
+          if (!alreadyNotified) {
+            await NotificationEvent.sellerPayoutConnected(userId, account.id);
+          }
+        } catch (error) {
+          await User.updateOne(
+            { _id: userId, stripePayoutNotifiedAccountId: account.id },
+            { $unset: { stripePayoutNotifiedAccountId: 1 } },
+          );
+          throw error;
+        }
+      }
+    } catch (error) {
+      errorLogger.error(`[STRIPE_CONNECT] Verification notification failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 
   return {
@@ -144,6 +176,26 @@ const assertPayoutReady = async (userId: string) => {
       'Complete Stripe payout onboarding before creating a product listing',
     );
   }
+};
+
+const notifyPayoutRequiredForReservation = async (
+  userId: string,
+  orderId: string,
+) => {
+  try {
+    const status = await accountStatus(userId);
+    if (!status.connected || !status.detailsSubmitted || !status.payoutsEnabled) {
+      await NotificationEvent.sellerOnboardingRequired(userId, orderId);
+    }
+  } catch (error) {
+    // A provider failure must not interrupt a paid order or send a false reminder.
+    errorLogger.error(`[STRIPE_CONNECT] Reservation payout check failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+};
+
+const accountUpdated = async (accountId: string) => {
+  const user = await User.findOne({ stripeAccountId: accountId }).select('_id');
+  if (user) await accountStatus(user._id.toString());
 };
 
 const onboardingLink = async (userId: string) => {
@@ -240,4 +292,6 @@ export const ConnectService = {
   refreshFromState,
   assertPayoutReady,
   disconnectAccount,
+  notifyPayoutRequiredForReservation,
+  accountUpdated,
 };

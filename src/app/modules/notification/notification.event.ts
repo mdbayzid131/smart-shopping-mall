@@ -511,13 +511,13 @@ const issueResolved = async (
   );
 
 const wishlistItemSaved = async (
-  sellerId: string,
+  userId: string,
   wishlistId: string,
   productId: string,
   productName: string,
 ) =>
   NotificationService.safeCreateNotification({
-    recipientId: sellerId,
+    recipientId: userId,
     type: NOTIFICATION_TYPE.WISHLIST_ITEM_SAVED,
     title: 'Added to Wishlist',
     body: `The ${productName} has been saved to your wishlist.`,
@@ -634,24 +634,24 @@ const itemRejected = async (
     data: { screen: 'my_listings', productId, status: 'rejected', rejectionReason },
   });
 
-const sellerOnboardingRequired = async (userId: string) =>
+const sellerOnboardingRequired = async (userId: string, orderId: string) =>
   NotificationService.safeCreateNotification({
     recipientId: userId,
     type: NOTIFICATION_TYPE.SELLER_ONBOARDING_REQUIRED,
-    title: 'Complete your seller details',
-    body: 'Complete payout onboarding before creating product listings.',
-    eventKey: `seller:${userId}:onboarding-required`,
-    data: { screen: 'seller_onboarding' },
+    title: 'Verify payout details',
+    body: 'Your item has been reserved. Verify your payout details to receive payment after your sale is completed.',
+    eventKey: `order:${orderId}:payout-verification-required`,
+    data: { screen: 'seller_onboarding', section: 'payout_details' },
   });
 
-const sellerPayoutConnected = async (userId: string) =>
-  NotificationService.safeCreateNotification({
+const sellerPayoutConnected = async (userId: string, accountId: string) =>
+  NotificationService.createNotification({
     recipientId: userId,
     type: NOTIFICATION_TYPE.SELLER_ONBOARDING_REQUIRED,
     title: 'Payout details verified',
     body: 'Your payout details have been successfully connected. You are now ready to receive payments for sold items.',
-    eventKey: `seller:${userId}:payout-connected`,
-    data: { screen: 'seller_onboarding' },
+    eventKey: `seller:${userId}:payout-connected:${accountId}`,
+    data: { screen: 'seller_onboarding', section: 'payout_details' },
   });
 
 export const NotificationEvent = {

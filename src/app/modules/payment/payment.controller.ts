@@ -44,6 +44,10 @@ const stripeWebhook = catchAsync(async (req: Request, res: Response) => {
       break;
   }
 
+  if (event.type === 'account.updated') {
+    await ConnectService.accountUpdated(event.data.object.id);
+  }
+
   res.status(StatusCodes.OK).json({ received: true });
 });
 

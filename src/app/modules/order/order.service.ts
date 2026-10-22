@@ -33,6 +33,7 @@ import {
 import { IDeliveryDetails } from './order.interface';
 import { Order } from './order.model';
 import { User } from '../user/user.model';
+import { ConnectService } from '../payment/connect.service';
 import { PaymentMethodService } from '../payment-method/payment-method.service';
 import { Issue } from '../issue/issue.model';
 import { buildOrderDetails } from './order.presenter';
@@ -493,6 +494,9 @@ const handlePaymentSucceeded = async (payment: SuccessfulPayment) => {
     { productId: order.product.toString(), status: 'reserved' },
   );
   void NotificationEvent.paymentSucceeded(order);
+  void ConnectService.notifyPayoutRequiredForReservation(
+    order.seller.toString(), order._id.toString(),
+  );
   void NotificationEvent.wishlistAvailabilityChanged(
     order.product.toString(),
     false,

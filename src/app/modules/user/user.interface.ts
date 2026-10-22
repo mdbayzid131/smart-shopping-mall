@@ -41,6 +41,7 @@ export type IUser = {
   authentication?: IAuthentication;
   loginOtp?: ILoginOtp;
   stripeAccountId?: string;
+  stripePayoutNotifiedAccountId?: string;
   stripeCustomerId?: string;
 };
 

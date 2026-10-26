@@ -1160,7 +1160,7 @@ enum UserStatus { active, ban }
 - Response fields are `totalProductsListed`, `totalProductsPurchased`, `totalProductsSold`, `closetValue`, `totalSalesValue`, `totalEarnings`, and `currency`.
 - `totalProductsListed` counts the user's posted product records, including sold listings. `totalProductsPurchased` counts paid, non-cancelled/non-refunded purchases.
 - `totalProductsSold` counts paid sales delivered/completed successfully. `totalSalesValue` sums those orders' sale prices, regardless of whether the seller payout has arrived.
-- **Closet Value** uses `closetValue`: the sum of current `live`/`available` listing prices. Pending review, rejected, reserved, in-transit and sold products are excluded. This is a monetary amount, not the number sold or the seller's earnings.
+- **Closet Value** uses `closetValue`: the sum of this seller's product prices at every status except `sold`, as confirmed by the client. Pending review, rejected, reserved and other unsold statuses are included. This is a monetary amount, not the number sold or the seller's earnings.
 - `totalEarnings` remains separate: actual paid seller payouts, using the stored post-fee `sellerPayout` amount and excluding cancelled/refunded orders. Never display it under Closet Value.
 - The public seller header's **Items Sold** uses `totalProductsSold`, not that seller's purchases. Both profile headers use the same `closetValue` field. Zero is authoritative; do not replace it with a paginated list length.
 
@@ -1765,7 +1765,7 @@ Priority order for backend tweaks that the Flutter team will need early:
 
 1. **[P0]** Add `POST /auth/resend-otp-public` accepting JSON `{ email }` without JWT (rate-limited, same limiter as login). Or relax existing `/resend-otp` auth to allow `?email=` for unverified accounts.
 2. **[P1]** Socket.io implementation: add explicit `join('user:<userId>')` handler + emit `order:status_updated` on order status transitions. Today sockets is scaffolded but no event wiring.
-3. **[P1]** Add profile-aggregated fields: itemsListed count, purchasesCount, closetValue (AED sum of sellerPayout for completed orders + current listed available product price totals) — saves N+1 client calls.
+3. **[DONE]** Profile-aggregated fields are available; Closet Value sums product prices across all statuses except `sold` (see Profile header stats above). Seller payouts are a separate earnings field.
 4. **[DONE]** Saved-card endpoints are available at `GET /payment-methods`, `POST /payment-methods/setup-intent`, and `DELETE /payment-methods/:id`.
 5. **[P2]** Add `PATCH /products/:id/media` (multipart `image` + `doc` route with fileUploadHandler) to enable editing product images without recreating a listing.
 6. **[P3]** Normalize reset-password to use `Authorization: Bearer <resetJWT>` pattern for consistency (currently raw header) to simplify Flutter's interceptor pattern.

@@ -69,7 +69,7 @@ const removeFromWishlist = async (
   userId: string,
   productId: string,
 ): Promise<WishlistMutationResult> => {
-  const product = await Product.findById(productId).select('_id');
+  const product = await Product.findById(productId).select('_id name');
   if (!product) {
     throw new ApiError(StatusCodes.NOT_FOUND, 'Product not found');
   }
@@ -92,6 +92,10 @@ const removeFromWishlist = async (
   );
 
   publishProductWishlistCount(productId, wishlistCount);
+
+  void NotificationEvent.wishlistItemRemoved(
+    userId, wishlist._id.toString(), productId, product.name,
+  );
 
   return { wishlist, wishlistCount };
 };

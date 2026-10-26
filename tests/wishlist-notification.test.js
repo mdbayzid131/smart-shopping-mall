@@ -47,3 +47,30 @@ for (const sellerId of ['seller-1', 'buyer-1']) {
     assert.equal(notifications.length, 1);
   });
 }
+
+test('removing a favorite notifies only the user removing it and does not repeat on retry', async t => {
+  const notifications = [];
+  let present = true;
+  t.mock.method(Product, 'findById', () => ({
+    select: async () => ({ _id: 'product-1', name: 'Bag', seller: 'seller-1' }),
+  }));
+  t.mock.method(Wishlist, 'findOneAndDelete', async filter => {
+    assert.deepEqual(filter, { user: 'buyer-1', product: 'product-1' });
+    if (!present) return null;
+    present = false;
+    return { _id: 'wishlist-1' };
+  });
+  t.mock.method(Wishlist, 'countDocuments', async () => 0);
+  const update = t.mock.method(Product, 'updateOne', async () => ({}));
+  t.mock.method(socketHelper, 'emitToAll', () => {});
+  t.mock.method(NotificationService, 'safeCreateNotification', async payload => notifications.push(payload));
+  await WishlistService.removeFromWishlist('buyer-1', 'product-1');
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].recipientId, 'buyer-1');
+  assert.equal(notifications[0].type, NOTIFICATION_TYPE.WISHLIST_ITEM_REMOVED);
+  assert.equal(notifications[0].eventKey, 'wishlist:wishlist-1:removed');
+  assert.deepEqual(notifications[0].data, { screen: 'product_details', productId: 'product-1' });
+  assert.deepEqual(update.mock.calls[0].arguments[1], { $set: { wishlistCount: 0 } });
+  await assert.rejects(WishlistService.removeFromWishlist('buyer-1', 'product-1'));
+  assert.equal(notifications.length, 1);
+});

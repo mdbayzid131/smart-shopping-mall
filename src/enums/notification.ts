@@ -22,6 +22,7 @@ export enum NOTIFICATION_TYPE {
   ISSUE_CREATED = 'issue_created',
   ISSUE_RESOLVED = 'issue_resolved',
   WISHLIST_ITEM_SAVED = 'wishlist_item_saved',
+  WISHLIST_ITEM_REMOVED = 'wishlist_item_removed',
   WISHLIST_ITEM_UPDATED = 'wishlist_item_updated',
   WISHLIST_ITEM_UNAVAILABLE = 'wishlist_item_unavailable',
   WISHLIST_ITEM_AVAILABLE = 'wishlist_item_available',

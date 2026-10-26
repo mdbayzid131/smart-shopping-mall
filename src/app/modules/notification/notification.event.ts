@@ -525,6 +525,20 @@ const wishlistItemSaved = async (
     data: { screen: 'product_details', productId },
   });
 
+const wishlistItemRemoved = async (
+  userId: string,
+  wishlistId: string,
+  productId: string,
+  productName: string,
+) => NotificationService.safeCreateNotification({
+  recipientId: userId,
+  type: NOTIFICATION_TYPE.WISHLIST_ITEM_REMOVED,
+  title: 'Removed from Wishlist',
+  body: `The ${productName} has been removed from your wishlist.`,
+  eventKey: `wishlist:${wishlistId}:removed`,
+  data: { screen: 'product_details', productId },
+});
+
 const wishlistItemUpdated = async (
   userId: string,
   productId: string,
@@ -666,6 +680,7 @@ export const NotificationEvent = {
   issueCreated,
   issueResolved,
   wishlistItemSaved,
+  wishlistItemRemoved,
   wishlistItemUpdated,
   wishlistItemUnavailable,
   wishlistItemAvailable,

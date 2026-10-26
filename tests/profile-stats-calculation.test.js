@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { Types } = require('mongoose');
+const sift = require('sift').default;
 const { User } = require('../dist/app/modules/user/user.model');
 const { Product } = require('../dist/app/modules/product/product.model');
 const { Order } = require('../dist/app/modules/order/order.model');
@@ -38,7 +39,12 @@ test('profile keeps purchases, completed sales, inventory value and paid earning
   });
   t.mock.method(Product, 'aggregate', async pipeline => {
     assert.equal(pipeline[0].$match.seller, id);
-    assert.deepEqual(pipeline[0].$match.status.$in, ['live', 'available']);
+    const statuses = ['pending_review', 'live', 'rejected', 'reserved', 'collected',
+      'authenticated', 'dispatched', 'delivered', 'sold', 'available', 'secured', 'under_review'];
+    const records = statuses.map(status => ({ seller: id, status, price: 100 }));
+    records.push({ seller: new Types.ObjectId(), status: 'live', price: 999 });
+    const included = records.filter(sift(pipeline[0].$match));
+    assert.deepEqual(included.map(product => product.status), statuses.filter(status => status !== 'sold'));
     assert.equal(pipeline[1].$group.closetValue.$sum, '$price');
     return [{ closetValue: 1234.5 }];
   });

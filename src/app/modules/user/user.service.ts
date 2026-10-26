@@ -241,7 +241,7 @@ const getProfileStatsFromDB = async (userId: string) => {
         },
       ]),
       Product.aggregate<{ closetValue: number }>([
-        { $match: { seller: user._id, status: { $in: ['live', 'available'] } } },
+        { $match: { seller: user._id, status: { $ne: 'sold' } } },
         { $group: { _id: null, closetValue: { $sum: '$price' } } },
       ]),
     ]);

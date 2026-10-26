@@ -45,7 +45,10 @@ const sendPushNotification = async (
   notification?: ReturnType<typeof toNotificationDto>,
 ) => {
   const messaging = getFirebaseMessaging();
-  if (!messaging) return;
+  if (!messaging) {
+    if (notification) errorLogger.warn('[FCM] Delivery skipped: Firebase messaging is disabled');
+    return;
+  }
 
   const staleBefore = new Date(Date.now() - PUSH_REGISTRATION_MAX_AGE_MS);
   await DeviceRegistration.deleteMany({
@@ -56,6 +59,9 @@ const sendPushNotification = async (
     user: recipientId,
     lastSeenAt: { $gte: staleBefore },
   }).select('+registrationToken');
+  if (notification && registrations.length === 0) {
+    errorLogger.warn(`[FCM] No active registered device for recipient=${recipientId}`);
+  }
 
   for (let index = 0; index < registrations.length; index += PUSH_BATCH_SIZE) {
     const batch = registrations.slice(index, index + PUSH_BATCH_SIZE);
@@ -64,6 +70,12 @@ const sendPushNotification = async (
     const response = await messaging.sendEachForMulticast(
       buildNotificationPush(tokens, unreadCount, notification),
     );
+    response.responses.forEach((delivery, index) => {
+      if (!delivery.success) {
+        const device = batch[index];
+        errorLogger.warn(`[FCM] Delivery failed recipient=${recipientId} platform=${device.platform} device=${device.deviceId ?? 'unknown'} code=${delivery.error?.code ?? 'unknown'}`);
+      }
+    });
 
     const invalidTokens = response.responses.flatMap((item, responseIndex) => {
       const code = item.error?.code;

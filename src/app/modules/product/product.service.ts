@@ -1,9 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { StatusCodes } from 'http-status-codes';
 import type { Express } from 'express';
+import { Types, PipelineStage } from 'mongoose';
 import config from '../../../config';
 import ApiError from '../../../errors/ApiError';
-import QueryBuilder from '../../builder/QueryBuilder';
+import QueryBuilder, { normalizePagination } from '../../builder/QueryBuilder';
+import { wardrobeSortStages } from './product-wardrobe.util';
 import { IProduct } from './product.interface';
 import { Product } from './product.model';
 import { uploadToS3, deleteFromS3 } from '../../../helpers/s3Helper';
@@ -23,6 +25,7 @@ import { errorLogger } from '../../../shared/logger';
 import { optimizeUploadedImage } from '../../../helpers/imageOptimizer';
 import {
   invalidateProductCaches,
+  publishProductDeleted,
   PRODUCT_DETAIL_CACHE_PREFIX,
   PRODUCT_LIST_CACHE_PREFIX,
   synchronizeProductStatusMutation,
@@ -353,16 +356,37 @@ const getMyProductsFromDB = async (
   userId: string,
   query: Record<string, unknown>,
 ) => {
-  const productQuery = new QueryBuilder(Product.find({ seller: userId }), query)
+  const productQuery = new QueryBuilder(Product.find(), query)
     .filter()
-    .sort()
-    .paginate()
     .fields();
 
-  const [result, meta] = await Promise.all([
-    productQuery.modelQuery.lean(),
-    productQuery.getPaginationInfo(),
+  // Aggregation does not cast strings to ObjectIds/numbers like find() does.
+  const requestedFilter = productQuery.modelQuery.cast(Product);
+  const filter = { $and: [{ seller: new Types.ObjectId(userId) }, requestedFilter] };
+  const { page, limit } = normalizePagination(query);
+  const pipeline: PipelineStage[] = [
+    { $match: filter },
+    ...wardrobeSortStages(),
+    { $skip: (page - 1) * limit },
+    { $limit: limit },
+    { $unset: '_wardrobePriority' },
+  ];
+  const projection = productQuery.modelQuery.projection();
+  if (projection && Object.keys(projection).length) {
+    // Mongoose leaves exclusion keys prefixed until a find query executes.
+    const aggregateProjection = Object.fromEntries(
+      Object.entries(projection).map(([key, value]) =>
+        key.startsWith('-') ? [key.slice(1), 0] : [key, value],
+      ),
+    );
+    pipeline.push({ $project: aggregateProjection });
+  }
+
+  const [result, total] = await Promise.all([
+    Product.aggregate<IProduct>(pipeline),
+    Product.countDocuments(filter),
   ]);
+  const meta = { total, limit, page, totalPage: Math.ceil(total / limit) };
 
   const productIds = result.map((p: any) => p._id);
   const latestOrders = await Order.find(buildConfirmedOrderFilter({
@@ -557,8 +581,8 @@ const deleteProductFromDB = async (
   await Promise.all(deletePromises);
 
   const result = await Product.findByIdAndDelete(id);
+  if (result) publishProductDeleted(id);
   await Wishlist.deleteMany({ product: product._id });
-  invalidateProductCaches(id);
   if (result) {
     void Promise.all(
       watcherIds.map(watcherId =>

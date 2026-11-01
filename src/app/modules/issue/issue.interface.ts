@@ -13,4 +13,8 @@ export type IIssue = {
   reason: string;
   admin: Types.ObjectId;
   resolved: boolean;
+  resolvedAt?: Date;
+  resolvedBy?: Types.ObjectId;
+  resolutionAction?: string;
+  retainNote?: boolean;
 }

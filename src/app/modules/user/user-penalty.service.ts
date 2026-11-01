@@ -1,86 +1,30 @@
-import config from '../../../config';
+﻿import config from '../../../config';
 import { ORDER_OUTCOME } from '../../../enums/order';
 import { User } from './user.model';
 
-type PenaltyResult = {
-  count: number;
-  status: 'active' | 'restricted' | 'suspended' | 'ban';
-};
-
-const recordSellerOffence = async (
-  sellerId: string,
-  outcome: ORDER_OUTCOME,
-): Promise<PenaltyResult | null> => {
-  const immediateSuspension = outcome === ORDER_OUTCOME.COUNTERFEIT;
-  const user = await User.findByIdAndUpdate(
-    sellerId,
-    {
-      $inc: { sellerStrikes: 1 },
-      ...(immediateSuspension
-        ? {
-            $set: {
-              status: 'suspended',
-              statusReason: 'Counterfeit item pending investigation',
-            },
-          }
-        : {}),
-    },
+type PenaltyResult = { count: number; status: 'active' | 'restricted' | 'suspended' | 'ban' };
+const recordSellerOffence = async (sellerId: string, outcome: ORDER_OUTCOME, orderId?: string): Promise<PenaltyResult | null> => {
+  if (![ORDER_OUTCOME.AUTHENTICATION_FAILED, ORDER_OUTCOME.COUNTERFEIT].includes(outcome) || !orderId) return null;
+  let user = await User.findOneAndUpdate(
+    { _id: sellerId, authenticationFailureOrders: { $ne: orderId } },
+    { $inc: { failedAuthentications: 1 }, $addToSet: { authenticationFailureOrders: orderId } },
     { new: true },
   );
+  if (!user) user = await User.findById(sellerId).select('failedAuthentications status');
   if (!user) return null;
-
-  if (
-    !immediateSuspension &&
-    user.sellerStrikes >=
-      config.penaltyPolicy.sellerStrikeSuspensionThreshold &&
-    user.status === 'active'
-  ) {
-    user.status = 'suspended';
-    user.statusReason = 'Repeated seller policy offences pending review';
-    await user.save();
+  if (user.failedAuthentications >= config.penaltyPolicy.sellerStrikeSuspensionThreshold) {
+    await User.updateOne({ _id: sellerId, status: { $in: ['active', 'restricted'] } }, {
+      $set: { status: 'suspended', statusReason: 'Account suspended after repeated failed item authentications. Contact Closete Support to request a review.' },
+    });
+    if (user.status === 'active' || user.status === 'restricted') user.status = 'suspended';
   }
-
-  return { count: user.sellerStrikes, status: user.status };
+  return { count: user.failedAuthentications, status: user.status };
 };
-
-const recordMissedCollection = async (
-  sellerId: string,
-): Promise<PenaltyResult | null> => {
-  const user = await User.findByIdAndUpdate(
-    sellerId,
-    { $inc: { missedCollections: 1 } },
-    { new: true },
-  );
-  return user
-    ? { count: user.missedCollections, status: user.status }
-    : null;
+const recordMissedCollection = async (sellerId: string): Promise<PenaltyResult | null> => {
+  const user = await User.findByIdAndUpdate(sellerId, { $inc: { missedCollections: 1 } }, { new: true });
+  return user ? { count: user.missedCollections, status: user.status } : null;
 };
-
-const recordUnjustifiedBuyerRejection = async (
-  buyerId: string,
-): Promise<PenaltyResult | null> => {
-  const user = await User.findByIdAndUpdate(
-    buyerId,
-    { $inc: { buyerUnjustifiedRejections: 1 } },
-    { new: true },
-  );
-  if (!user) return null;
-
-  if (
-    user.buyerUnjustifiedRejections >=
-      config.penaltyPolicy.buyerRejectionRestrictionThreshold &&
-    user.status === 'active'
-  ) {
-    user.status = 'restricted';
-    user.statusReason = 'Repeated order rejections without a valid reason';
-    await user.save();
-  }
-
-  return { count: user.buyerUnjustifiedRejections, status: user.status };
-};
-
-export const UserPenaltyService = {
-  recordSellerOffence,
-  recordMissedCollection,
-  recordUnjustifiedBuyerRejection,
-};
+// Kept for compatibility; operational availability and customer cancellation
+// must not restrict an account. No new buyer penalty is introduced by this flow.
+const recordUnjustifiedBuyerRejection = async (_buyerId: string): Promise<PenaltyResult | null> => null;
+export const UserPenaltyService = { recordSellerOffence, recordMissedCollection, recordUnjustifiedBuyerRejection };

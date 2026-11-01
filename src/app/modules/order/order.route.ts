@@ -34,6 +34,12 @@ router.patch(
   OrderController.markPayoutPaid,
 );
 
+router.patch(
+  '/:id/confirm-delivery',
+  auth(USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN),
+  OrderController.confirmDelivery,
+);
+
 router.post(
   '/:id/missed-collection',
   auth(USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN),

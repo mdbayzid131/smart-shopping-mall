@@ -21,6 +21,9 @@ const orderSchema = new Schema<IOrder>(
     platformFee: { type: Number, required: true },
     sellerPayout: { type: Number, required: true },
     note: { type: String, maxlength: 1000 },
+    activeIssue: { type: Schema.Types.ObjectId, ref: 'Issue' },
+    conditionNote: { type: String, maxlength: 1000 },
+    returnStatus: { type: String, enum: ['with_seller', 'awaiting_return'] },
     pickupWindow: {
       start: { type: Date },
       end: { type: Date },

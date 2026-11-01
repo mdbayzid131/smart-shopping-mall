@@ -41,6 +41,8 @@ import { buildOrderDetails } from './order.presenter';
 import { NotificationEvent } from '../notification/notification.event';
 import { synchronizeProductStatusMutation } from '../product/product-state-sync';
 import { UserPenaltyService } from '../user/user-penalty.service';
+import { withOrderWorkflowLock } from './order-workflow-lock';
+import { assertIssueStage, isOperationalOutcome } from '../issue/issue-workflow';
 
 const AUTHENTICATION_FAILURE_OUTCOMES = new Set<ORDER_OUTCOME>([
   ORDER_OUTCOME.AUTHENTICATION_FAILED,
@@ -56,10 +58,7 @@ const DELIVERY_REJECTION_OUTCOMES = new Set<ORDER_OUTCOME>([
 export const refundAmountForOutcome = (
   order: { price: number; sellerPayout: number },
   outcome: ORDER_OUTCOME,
-) =>
-  DELIVERY_REJECTION_OUTCOMES.has(outcome)
-    ? order.sellerPayout
-    : order.price;
+) => order.price;
 
 const generateOrderNumber = () => {
   const random = Math.floor(100 + Math.random() * 900);
@@ -748,6 +747,7 @@ const updateOrderSchedule = async (
   if (
     order.status === ORDER_STATUS.CANCELLED ||
     order.status === ORDER_STATUS.REFUNDED ||
+    order.status === ORDER_STATUS.DELIVERED ||
     order.status === ORDER_STATUS.COMPLETED
   ) {
     throw new ApiError(
@@ -834,6 +834,7 @@ const getAllOrdersForAdmin = async (query: Record<string, unknown>) => {
   const [rawResult, meta] = await Promise.all([
     orderQuery.modelQuery
       .populate('product')
+      .populate('activeIssue', 'reason issueType outcome resolved')
       .populate('buyer', 'name email contact location phone')
       .populate('seller', 'name email contact location phone stripeAccountId verified')
       .lean(),
@@ -841,6 +842,7 @@ const getAllOrdersForAdmin = async (query: Record<string, unknown>) => {
   ]);
 
   const result = rawResult.map((order: any) => {
+    delete order.workflowLease;
     if (order.seller && typeof order.seller === 'object') {
       order.seller.payoutsEnabled = Boolean(order.seller.stripeAccountId);
     }
@@ -922,6 +924,7 @@ const applyOutcomePenalty = async (
     await UserPenaltyService.recordSellerOffence(
       order.seller.toString(),
       outcome,
+      order._id.toString(),
     );
   } else if (outcome === ORDER_OUTCOME.BUYER_CHANGED_MIND) {
     await UserPenaltyService.recordUnjustifiedBuyerRejection(
@@ -930,7 +933,7 @@ const applyOutcomePenalty = async (
   }
 };
 
-const updateOrderStatus = async (
+const updateOrderStatusWithinWorkflow = async (
   orderId: string,
   targetStatus: ORDER_STATUS,
   note: string | undefined,
@@ -964,9 +967,18 @@ const updateOrderStatus = async (
     requestedOutcome,
   );
 
+  if (outcome) {
+    if (isOperationalOutcome(outcome) && outcome !== ORDER_OUTCOME.CONDITION_DIFFERS) {
+      throw new ApiError(400, 'Unavailable issues do not refund or cancel an order.');
+    }
+    assertIssueStage(order.status, outcome);
+  }
+
 
 
   if (outcome) {
+    order.returnStatus = [ORDER_STATUS.RESERVED, ORDER_STATUS.COLLECTION_PENDING].includes(order.status)
+      ? 'with_seller' : 'awaiting_return';
     await refundOrderPayment(
       order,
       refundAmountForOutcome(order, outcome),
@@ -982,10 +994,10 @@ const updateOrderStatus = async (
     }
     await synchronizeProductStatusMutation(
       Product.findByIdAndUpdate(order.product, {
-        $set: { status: 'under_review' },
+        $set: { status: 'rejected' },
         $unset: { reservationExpiresAt: 1 },
       }),
-      { productId: order.product.toString(), status: 'under_review' },
+      { productId: order.product.toString(), status: 'rejected' },
     );
   } else if (REFUND_TRIGGER_STATUSES.includes(targetStatus)) {
     if (order.payment.status === PAYMENT_STATUS.PAID) {
@@ -997,10 +1009,10 @@ const updateOrderStatus = async (
     }
     await synchronizeProductStatusMutation(
       Product.findByIdAndUpdate(order.product, {
-        $set: { status: 'live' },
+        $set: { status: 'rejected' },
         $unset: { buyer: 1, reservationExpiresAt: 1 },
       }),
-      { productId: order.product.toString(), status: 'live' },
+      { productId: order.product.toString(), status: 'rejected' },
     );
   }
 
@@ -1031,6 +1043,8 @@ const updateOrderStatus = async (
         { product: order.product, resolved: false },
         {
           $setOnInsert: {
+            order: order._id,
+            orderNumber: order.orderNumber,
             product: order.product,
             buyer: order.buyer,
             seller: order.seller,
@@ -1040,22 +1054,24 @@ const updateOrderStatus = async (
             outcome,
             reason: note?.trim() || outcome.replace(/_/g, ' '),
             admin: adminId,
-            resolved: false,
+            resolved: true,
           },
         },
         { upsert: true },
       );
     }
-    await applyOutcomePenalty(order, outcome);
+    if (AUTHENTICATION_FAILURE_OUTCOMES.has(outcome)) await applyOutcomePenalty(order, outcome);
     if (AUTHENTICATION_FAILURE_OUTCOMES.has(outcome)) {
-      void NotificationEvent.authenticationFailed(
+      await NotificationEvent.authenticationFailed(
         order,
         outcome as
           | ORDER_OUTCOME.AUTHENTICATION_FAILED
           | ORDER_OUTCOME.COUNTERFEIT,
       );
+    } else if ([ORDER_OUTCOME.BUYER_CANCELLED, ORDER_OUTCOME.SELLER_CANCELLED].includes(outcome)) {
+      await NotificationEvent.orderCancellation(order, outcome);
     } else {
-      void NotificationEvent.deliveryRejected(
+      await NotificationEvent.deliveryRejected(
         order,
         outcome as
           | ORDER_OUTCOME.NOT_AS_DESCRIBED
@@ -1065,21 +1081,127 @@ const updateOrderStatus = async (
       );
     }
   } else {
-    void NotificationEvent.orderStatusChanged(order, targetStatus);
-  }
-  if (
-    !outcome &&
-    (targetStatus === ORDER_STATUS.CANCELLED ||
-      targetStatus === ORDER_STATUS.REFUNDED)
-  ) {
-    void NotificationEvent.wishlistAvailabilityChanged(
-      order.product.toString(),
-      true,
-      `${order._id.toString()}:${targetStatus}`,
-    );
+    await NotificationEvent.orderStatusChanged(order, targetStatus);
   }
   return order;
 };
+
+const updateOrderStatus = async (
+  orderId: string, targetStatus: ORDER_STATUS, note: string | undefined,
+  adminId: string, requestedOutcome?: ORDER_OUTCOME, createPolicyIssue = true,
+) => withOrderWorkflowLock(orderId, async () => {
+  const issue = await Issue.exists({ order: orderId, resolved: false });
+  if (issue) throw new ApiError(409, 'Resolve the active issue using its available actions first.');
+  if (targetStatus === ORDER_STATUS.DELIVERED) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      'Use the confirm-delivery action so delivery and seller payout are processed together',
+    );
+  }
+  return updateOrderStatusWithinWorkflow(orderId, targetStatus, note, adminId, requestedOutcome, createPolicyIssue);
+});
+
+const confirmDeliveryAndPayout = async (orderId: string, adminId: string) =>
+  withOrderWorkflowLock(orderId, async () => {
+    const issue = await Issue.exists({ order: orderId, resolved: false });
+    if (issue) {
+      throw new ApiError(
+        StatusCodes.CONFLICT,
+        'Resolve the active issue before confirming delivery',
+      );
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      throw new ApiError(StatusCodes.NOT_FOUND, 'Order not found');
+    }
+
+    // A repeated request after a successful confirmation is safe and does not
+    // create another Stripe transfer or duplicate notifications.
+    if (
+      order.status === ORDER_STATUS.DELIVERED &&
+      order.payoutStatus === PAYOUT_STATUS.PAID
+    ) {
+      return order;
+    }
+
+    if (
+      ![ORDER_STATUS.DISPATCHED, ORDER_STATUS.READY_FOR_DELIVERY].includes(
+        order.status,
+      )
+    ) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        `Cannot confirm delivery while order is "${order.status}"`,
+      );
+    }
+    if (order.payment.status !== PAYMENT_STATUS.PAID) {
+      throw new ApiError(
+        StatusCodes.CONFLICT,
+        'The buyer payment is not settled; delivery cannot be confirmed',
+      );
+    }
+
+    const seller = await User.findById(order.seller).select('+stripeAccountId');
+    if (!seller?.stripeAccountId) {
+      throw new ApiError(
+        StatusCodes.CONFLICT,
+        'Seller has not connected a Stripe payout account',
+      );
+    }
+    const account = await retrieveConnectedAccount(seller.stripeAccountId);
+    if (!account.details_submitted || !account.payouts_enabled) {
+      throw new ApiError(
+        StatusCodes.CONFLICT,
+        'Seller Stripe onboarding is incomplete or payouts are disabled',
+      );
+    }
+
+    order.payoutStatus = PAYOUT_STATUS.PROCESSING;
+    order.payoutFailureReason = undefined;
+    await order.save();
+
+    try {
+      // Stripe receives a per-order idempotency key in createSellerTransfer,
+      // so a retry after a network/database failure cannot pay twice.
+      const transfer = await createSellerTransfer(
+        order.sellerPayout,
+        seller.stripeAccountId,
+        order.orderNumber,
+      );
+
+      await synchronizeProductStatusMutation(
+        Product.findByIdAndUpdate(order.product, { $set: { status: 'sold' } }),
+        { productId: order.product.toString(), status: 'sold' },
+      );
+
+      order.payoutTransferId = transfer.id;
+      order.payoutStatus = PAYOUT_STATUS.PAID;
+      order.payoutFailureReason = undefined;
+      order.status = ORDER_STATUS.DELIVERED;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      order.statusHistory.push({
+        status: ORDER_STATUS.DELIVERED,
+        note: 'Delivery confirmed; seller payout released automatically',
+        changedAt: new Date(),
+        changedBy: adminId,
+      } as any);
+      await order.save();
+      invalidateProductCaches(order.product.toString());
+
+      void NotificationEvent.orderStatusChanged(order, ORDER_STATUS.DELIVERED);
+      void NotificationEvent.payoutPaid(order);
+      return order;
+    } catch (error) {
+      // Keep the order in dispatch when payout cannot be completed. The admin
+      // can safely retry the same confirmation after the payout issue is fixed.
+      order.payoutStatus = PAYOUT_STATUS.FAILED;
+      order.payoutFailureReason =
+        error instanceof Error ? error.message : 'Stripe transfer failed';
+      await order.save();
+      throw error;
+    }
+  });
 
 const paySeller = async (order: InstanceType<typeof Order>) => {
   if (order.payoutStatus === PAYOUT_STATUS.PAID) return order;
@@ -1140,75 +1262,12 @@ const markPayoutPaid = async (orderId: string) => {
   return paySeller(order);
 };
 
-const reportMissedCollection = async (
-  orderId: string,
-  adminId: string,
-  note?: string,
-) => {
-  const order = await Order.findById(orderId);
-  if (!order) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Order not found');
-  }
-  if (
-    order.status !== ORDER_STATUS.COLLECTION_PENDING &&
-    (order.status as any) !== ORDER_STATUS.RESERVED &&
-    (order.status as any) !== ORDER_STATUS.SECURED &&
-    order.status !== ORDER_STATUS.COLLECTED
-  ) {
-    throw new ApiError(
-      StatusCodes.BAD_REQUEST,
-      'A missed collection can only be recorded while collection or pickup is pending',
-    );
-  }
-
-
-  order.missedCollectionAttempts =
-    Number(order.missedCollectionAttempts ?? 0) + 1;
-  if (note?.trim()) order.note = note.trim();
-  await order.save();
-  await UserPenaltyService.recordMissedCollection(order.seller.toString());
-  void NotificationEvent.collectionMissed(
-    order,
-    order.missedCollectionAttempts,
-  );
-
-  const threshold =
-    config.penaltyPolicy.missedCollectionCancellationThreshold;
-  if (order.missedCollectionAttempts < threshold) {
-    return {
-      order,
-      cancelled: false,
-      attemptsRemaining: threshold - order.missedCollectionAttempts,
-    };
-  }
-
-  await refundOrderPayment(order, order.price);
-  order.outcome = ORDER_OUTCOME.SELLER_UNAVAILABLE;
-  order.status = ORDER_STATUS.CANCELLED;
-  order.statusHistory.push({
-    status: ORDER_STATUS.CANCELLED,
-    note: note?.trim() || 'Cancelled after repeated missed collections',
-    changedAt: new Date(),
-    changedBy: adminId,
-  } as any);
-  await order.save();
-
-  await synchronizeProductStatusMutation(
-    Product.findByIdAndUpdate(order.product, {
-      $set: { status: 'live' },
-      $unset: { buyer: 1, reservationExpiresAt: 1 },
-    }),
-    { productId: order.product.toString(), status: 'live' },
-  );
-  void NotificationEvent.wishlistAvailabilityChanged(
-    order.product.toString(),
-    true,
-    `${order._id.toString()}:missed-collection-cancelled`,
-  );
-
-  return { order, cancelled: true, attemptsRemaining: 0 };
+const reportMissedCollection = async (orderId: string, adminId: string, note?: string) => {
+  const { IssueService } = await import('../issue/issue.service');
+  const issue = await IssueService.createIssue(undefined, orderId, ISSUE_TYPE.SELLER_UNAVAILABLE,
+    ORDER_OUTCOME.SELLER_UNAVAILABLE, note || 'Seller unavailable for collection', adminId);
+  return { issue, cancelled: false, order: await Order.findById(orderId) };
 };
-
 const cancelOrder = async (orderIdOrProductId: string, buyerId: string) => {
   let order = mongoose.isValidObjectId(orderIdOrProductId)
     ? await Order.findById(orderIdOrProductId)
@@ -1303,39 +1362,13 @@ const cancelOrder = async (orderIdOrProductId: string, buyerId: string) => {
     return cancelled;
   }
 
-  if (order.payment.status === PAYMENT_STATUS.PAID) {
-    await createRefund(
-      order.payment.paymentIntentId,
-      `order-refund:${order._id.toString()}`,
-    );
-    order.payment.status = PAYMENT_STATUS.REFUNDED;
-  }
-
-  order.status = ORDER_STATUS.CANCELLED;
-  order.statusHistory.push({
-    status: ORDER_STATUS.CANCELLED,
-    changedAt: new Date(),
+  return withOrderWorkflowLock(order._id.toString(), async () => {
+    const active = await Issue.exists({ order: order._id, resolved: false });
+    if (active) throw new ApiError(409, 'Please contact support to cancel an order with an open issue.');
+    return updateOrderStatusWithinWorkflow(order._id.toString(), ORDER_STATUS.REFUNDED,
+      'Buyer requested cancellation before collection', buyerId, ORDER_OUTCOME.BUYER_CANCELLED, false);
   });
-  await order.save();
-
-  await synchronizeProductStatusMutation(
-    Product.findByIdAndUpdate(order.product, {
-      $set: { status: 'live' },
-      $unset: { buyer: 1, reservationExpiresAt: 1 },
-    }),
-    { productId: order.product.toString(), status: 'live' },
-  );
-
-  void NotificationEvent.orderStatusChanged(order, ORDER_STATUS.CANCELLED);
-  void NotificationEvent.wishlistAvailabilityChanged(
-    order.product.toString(),
-    true,
-    `${order._id.toString()}:cancelled`,
-  );
-
-  return order;
 };
-
 const expirePendingOrders = async () => {
   const expired = await Order.find({
     status: ORDER_STATUS.PENDING_PAYMENT,
@@ -1422,6 +1455,8 @@ export const OrderService = {
   updateOrderSchedule,
   getAllOrdersForAdmin,
   updateOrderStatus,
+  updateOrderStatusWithinWorkflow,
+  confirmDeliveryAndPayout,
   markPayoutPaid,
   reportMissedCollection,
   cancelOrder,

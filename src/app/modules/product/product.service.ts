@@ -154,6 +154,8 @@ const createProductToDB = async (
   }
 
   const created = await Product.create(payload);
+  await User.findByIdAndUpdate(created.seller, { $min: { sellingStartedAt: created.get('createdAt') || new Date() } })
+    .catch(() => undefined);
   const result = await Product.findById(created._id)
     .populate('seller', 'name image avatar contact phone location country')
     .lean();
@@ -369,7 +371,7 @@ const getMyProductsFromDB = async (
     ...wardrobeSortStages(),
     { $skip: (page - 1) * limit },
     { $limit: limit },
-    { $unset: '_wardrobePriority' },
+    { $unset: ['_wardrobePriority', '_wardrobeStatus', '_wardrobeOrder'] },
   ];
   const projection = productQuery.modelQuery.projection();
   if (projection && Object.keys(projection).length) {

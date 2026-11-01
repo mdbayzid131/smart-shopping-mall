@@ -31,6 +31,8 @@ export enum NOTIFICATION_TYPE {
   AUTHENTICATION_FAILED = 'authentication_failed',
   COLLECTION_MISSED = 'collection_missed',
   DELIVERY_CANCELLED = 'delivery_cancelled',
+  ACCOUNT_SUSPENDED = 'account_suspended',
+  ACCOUNT_RESTORED = 'account_restored',
 }
 
 export enum DEVICE_PLATFORM {

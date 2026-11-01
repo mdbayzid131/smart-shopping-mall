@@ -253,6 +253,8 @@ export const buildOrderDetails = ({
     status,
     outcome: value.outcome || null,
     note: value.note || null,
+    conditionNote: value.conditionNote || null,
+    returnStatus: value.returnStatus || null,
     cancellationReason:
       value.cancellationReason || value.note || openIssue?.reason || null,
     progress: getOrderProgress(value.status, value.statusHistory),

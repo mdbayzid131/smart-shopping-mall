@@ -14,6 +14,7 @@ import generateOTP from '../../../util/generateOTP';
 import QueryBuilder from '../../builder/QueryBuilder';
 import { IUser } from './user.interface';
 import { User } from './user.model';
+import { ACTIVE_CLOSET_STATUSES, wardrobeStatusStages } from '../product/product-wardrobe.util';
 import { Order } from '../order/order.model';
 import { Product } from '../product/product.model';
 import { NotificationService } from '../notification/notification.service';
@@ -241,7 +242,9 @@ const getProfileStatsFromDB = async (userId: string) => {
         },
       ]),
       Product.aggregate<{ closetValue: number }>([
-        { $match: { seller: user._id, status: { $ne: 'sold' } } },
+        { $match: { seller: user._id, status: { $in: ACTIVE_CLOSET_STATUSES } } },
+        ...wardrobeStatusStages(),
+        { $match: { _wardrobeStatus: { $in: ACTIVE_CLOSET_STATUSES } } },
         { $group: { _id: null, closetValue: { $sum: '$price' } } },
       ]),
     ]);

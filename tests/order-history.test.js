@@ -53,17 +53,21 @@ test('paid cancellations still refund the buyer and notify the order parties', a
   const buyer = new Types.ObjectId();
   const order = {
     _id: new Types.ObjectId(), buyer, product: new Types.ObjectId(), status: 'reserved',
+    seller: new Types.ObjectId(), price: 100, sellerPayout: 88, orderNumber: 'CLT-test',
     payment: { status: 'paid', paymentIntentId: 'pi_paid' }, statusHistory: [], save: async () => {},
   };
   t.mock.method(Order, 'findById', async () => order);
   t.mock.method(Product, 'findByIdAndUpdate', async () => ({ status: 'live' }));
   const refund = t.mock.method(stripe, 'createRefund', async () => ({}));
-  const notify = t.mock.method(NotificationEvent, 'orderStatusChanged', async () => {});
+  t.mock.method(Order.collection, 'findOneAndUpdate', async () => ({}));
+  t.mock.method(Order.collection, 'updateOne', async () => ({}));
+  t.mock.method(require('../dist/app/modules/issue/issue.model').Issue, 'exists', async () => null);
+  const notify = t.mock.method(NotificationEvent, 'orderCancellation', async () => {});
   t.mock.method(NotificationEvent, 'wishlistAvailabilityChanged', async () => {});
   await OrderService.cancelOrder(order._id.toString(), buyer.toString());
   assert.equal(refund.mock.callCount(), 1);
   assert.equal(order.payment.status, 'refunded');
-  assert.equal(order.status, 'cancelled');
+  assert.equal(order.status, 'refunded');
   assert.equal(notify.mock.callCount(), 1);
 });
 

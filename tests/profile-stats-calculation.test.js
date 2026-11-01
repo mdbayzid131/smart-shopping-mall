@@ -44,8 +44,16 @@ test('profile keeps purchases, completed sales, inventory value and paid earning
     const records = statuses.map(status => ({ seller: id, status, price: 100 }));
     records.push({ seller: new Types.ObjectId(), status: 'live', price: 999 });
     const included = records.filter(sift(pipeline[0].$match));
-    assert.deepEqual(included.map(product => product.status), statuses.filter(status => status !== 'sold'));
-    assert.equal(pipeline[1].$group.closetValue.$sum, '$price');
+    assert.deepEqual(included.map(product => product.status), [
+      'pending_review', 'live', 'reserved', 'collected', 'authenticated',
+      'dispatched', 'available', 'secured', 'under_review',
+    ]);
+    assert.ok(pipeline.some(stage => stage.$lookup?.from === 'orders'));
+    const statusStage = pipeline.find(stage => stage.$addFields?._wardrobeStatus);
+    assert.deepEqual(statusStage.$addFields._wardrobeStatus.$ifNull,
+      [{ $arrayElemAt: ['$_wardrobeOrder.status', 0] }, '$status']);
+    assert.deepEqual(pipeline.at(-2).$match._wardrobeStatus.$in, pipeline[0].$match.status.$in);
+    assert.equal(pipeline.at(-1).$group.closetValue.$sum, '$price');
     return [{ closetValue: 1234.5 }];
   });
   const result = await UserService.getProfileStatsFromDB(id.toString());

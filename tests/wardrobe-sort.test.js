@@ -8,19 +8,29 @@ const { ProductService } = require('../dist/app/modules/product/product.service'
 
 // Execute the small subset of Mongo stages used here against fixtures, without a database.
 function evaluate(expression, row) {
-  if (typeof expression === 'string' && expression.startsWith('$')) return row[expression.slice(1)];
+  if (typeof expression === 'string' && expression.startsWith('$')) {
+    return expression.slice(1).split('.').reduce((value, key) =>
+      Array.isArray(value) ? value.map(item => item[key]) : value?.[key], row);
+  }
   if (!expression || typeof expression !== 'object') return expression;
   if (expression.$in) return expression.$in[1].includes(evaluate(expression.$in[0], row));
+  if (expression.$cond) return evaluate(expression.$cond[evaluate(expression.$cond[0], row) ? 1 : 2], row);
+  if (expression.$ifNull) return evaluate(expression.$ifNull[0], row) ?? evaluate(expression.$ifNull[1], row);
+  if (expression.$arrayElemAt) return evaluate(expression.$arrayElemAt[0], row)?.[expression.$arrayElemAt[1]];
   if (expression.$switch) {
     const branch = expression.$switch.branches.find(branch => evaluate(branch.case, row));
     return branch ? branch.then : expression.$switch.default;
   }
   throw new Error('Unexpected aggregation expression');
 }
-function aggregate(rows, pipeline) {
+function aggregate(rows, pipeline, orders = []) {
   let result = rows.map(row => ({ ...row }));
   for (const stage of pipeline) {
-    if (stage.$match) result = result.filter(sift(stage.$match));
+    if (stage.$lookup) result = result.map(row => ({ ...row, _wardrobeOrder: orders
+      .filter(order => order.product.toString() === row._id.toString() &&
+        ['paid', 'refunded'].includes(order.payment.status) && order.status !== 'pending_payment')
+      .sort((a, b) => b.createdAt - a.createdAt).slice(0, 1) }));
+    else if (stage.$match) result = result.filter(sift(stage.$match));
     else if (stage.$addFields) result = result.map(row => ({ ...row,
       ...Object.fromEntries(Object.entries(stage.$addFields).map(([key, expression]) => [key, evaluate(expression, row)])),
     }));
@@ -33,7 +43,9 @@ function aggregate(rows, pipeline) {
     });
     else if (stage.$skip !== undefined) result = result.slice(stage.$skip);
     else if (stage.$limit !== undefined) result = result.slice(0, stage.$limit);
-    else if (stage.$unset) result.forEach(row => delete row[stage.$unset]);
+    else if (stage.$unset) result.forEach(row => {
+      for (const key of [].concat(stage.$unset)) delete row[key];
+    });
     else if (stage.$project) {
       // Default projection excludes __v; custom projections are not used in these fixtures.
       assert.deepEqual(stage.$project, { __v: 0 });
@@ -51,22 +63,29 @@ test('wardrobe sorts review first, newest unsold next and sold last across pages
     ['reserved-new', 'reserved', '2026-10-25'],
     ['review-new', 'under_review', '2026-10-24'],
     ['sold-old', 'sold', '2026-10-19'],
+    ['refunded-new', 'rejected', '2026-10-27'],
+    ['refunded-review', 'under_review', '2026-10-28'],
   ].map(([name, status, date]) => ({ _id: new Types.ObjectId(), seller, name, status,
     createdAt: new Date(date), price: 100, images: [] }));
   rows.push({ _id: new Types.ObjectId(), seller: new Types.ObjectId(), name: 'another seller',
     status: 'pending_review', createdAt: new Date('2026-10-27') });
-  t.mock.method(Product, 'aggregate', async pipeline => aggregate(rows, pipeline));
+  const orders = [
+    { product: rows[6]._id, status: 'refunded', payment: { status: 'refunded' }, createdAt: new Date('2026-10-28') },
+    { product: rows[7]._id, status: 'refunded', payment: { status: 'refunded' }, createdAt: new Date('2026-10-29') },
+  ];
+  t.mock.method(Product, 'aggregate', async pipeline => aggregate(rows, pipeline, orders));
   t.mock.method(Product, 'countDocuments', async filter => rows.filter(sift(filter)).length);
-  t.mock.method(Order, 'find', () => ({ select() { return this; }, sort() { return this; }, lean: async () => [] }));
+  t.mock.method(Order, 'find', () => ({ select() { return this; }, sort() { return this; }, lean: async () => orders }));
 
   const names = [];
-  for (let page = 1; page <= 3; page++) {
+  for (let page = 1; page <= 4; page++) {
     const response = await ProductService.getMyProductsFromDB(seller.toString(), { page: String(page), limit: '2' });
-    assert.equal(response.meta.total, 6);
-    assert.equal(response.meta.totalPage, 3);
+    assert.equal(response.meta.total, 8);
+    assert.equal(response.meta.totalPage, 4);
     names.push(...response.result.map(row => row.name));
   }
-  assert.deepEqual(names, ['review-new', 'review-old', 'reserved-new', 'live-old', 'sold-new', 'sold-old']);
+  assert.deepEqual(names, ['review-new', 'review-old', 'reserved-new', 'live-old',
+    'refunded-review', 'refunded-new', 'sold-new', 'sold-old']);
 
   const filtered = await ProductService.getMyProductsFromDB(seller.toString(), { status: 'live' });
   assert.deepEqual(filtered.result.map(row => row.name), ['live-old']);

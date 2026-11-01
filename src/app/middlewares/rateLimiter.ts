@@ -13,7 +13,13 @@ const skipFixedTestOtp = (req: Request) =>
 
 export const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  limit: 300,
+  // Authenticated apps use polling as a fallback behind real-time sockets. A
+  // shared office/network can legitimately exceed the old 300-request cap.
+  // Sensitive auth/payment/device mutations retain their stricter limiters.
+  limit: 600,
+  // Browser CORS preflight traffic does not perform application work and must
+  // not consume the same quota as the request it is authorizing.
+  skip: (req: Request) => req.method === 'OPTIONS',
   standardHeaders: true,
   legacyHeaders: false,
   message: {

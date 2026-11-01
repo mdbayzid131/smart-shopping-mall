@@ -42,6 +42,9 @@ export type IOrder = {
   platformFee: number;
   sellerPayout: number;
   note?: string;
+  activeIssue?: Types.ObjectId;
+  conditionNote?: string;
+  returnStatus?: 'with_seller' | 'awaiting_return';
   pickupWindow?: IPickupWindow;
   estimatedDeliveryAt?: Date;
   deliveryDetails: IDeliveryDetails;

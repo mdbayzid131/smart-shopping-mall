@@ -64,6 +64,7 @@ const buildAuthTokens = (user: {
 type IAccountStatus = {
   verified: boolean;
   status: string;
+  statusReason?: string;
   email: string;
   role: USER_ROLES;
 };
@@ -83,7 +84,7 @@ function ensureAccountStatus<T extends IAccountStatus>(
   if (user.status === 'ban' || user.status === 'suspended') {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
-      'You don’t have permission to access this content. It looks like your account has been deactivated.',
+      `Account suspended. ${user.statusReason || 'Your account is currently blocked.'} Contact Closete Support if you believe this is an error.`,
     );
   }
   if (!allowUser && !ADMIN_ROLES.has(user.role)) {
@@ -652,10 +653,10 @@ const refreshTokenToDB = async (token: string) => {
     throw new ApiError(StatusCodes.UNAUTHORIZED, "User doesn't exist!");
   }
 
-  if (isExistUser.status === 'ban') {
+  if (isExistUser.status === 'ban' || isExistUser.status === 'suspended') {
     throw new ApiError(
       StatusCodes.UNAUTHORIZED,
-      'Your account has been deactivated.',
+      `Account suspended. ${isExistUser.statusReason || 'Your account is blocked.'} Contact Closete Support to request a review.`,
     );
   }
 

@@ -23,6 +23,10 @@ const issueSchema = new Schema<IIssue>(
     reason: { type: String, required: true },
     admin: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     resolved: { type: Boolean, default: false },
+    resolvedAt: Date,
+    resolvedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    resolutionAction: String,
+    retainNote: { type: Boolean, default: false },
   },
   {
     timestamps: true,

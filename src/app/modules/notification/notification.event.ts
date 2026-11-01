@@ -246,7 +246,7 @@ const authenticationFailed = async (
       recipientId: idOf(order.seller),
       type: NOTIFICATION_TYPE.AUTHENTICATION_FAILED,
       title: 'Authentication unsuccessful',
-      body: 'Your item did not pass authentication and has been removed from Closete. Our team will contact you with the next steps.',
+      body: 'Your item did not pass authentication. The transaction has been cancelled, the buyer refunded, and your item delisted. Our team will contact you about returning it.',
       eventKey: key,
       data: { ...sellerOrderData(order), outcome },
     }),
@@ -278,27 +278,27 @@ const deliveryRejected = async (
     [ORDER_OUTCOME.NOT_AS_DESCRIBED]: {
       buyerTitle: 'Delivery cancelled',
       buyerBody:
-        'The item received did not match its description. Your payment has been refunded, less the applicable Closete handling fee.',
+        'The item received did not match its description. Your payment has been refunded in full. Our team will arrange return of the item to the seller.',
       sellerBody:
         'The buyer rejected your item because it differed from the original listing. Our team will contact you regarding the next steps.',
     },
     [ORDER_OUTCOME.CONDITION_DIFFERS]: {
-      buyerTitle: 'Delivery cancelled',
+      buyerTitle: 'Order cancelled',
       buyerBody:
-        'The item’s condition did not match the listing. Your payment has been refunded, less the applicable Closete handling fee.',
+        'The item’s condition did not match the listing. Your payment has been refunded in full. Our team will arrange return of the item to the seller.',
       sellerBody:
-        'The buyer rejected your item because its condition differed from the listing.',
+        'This transaction was cancelled because the item condition differed from the listing. The buyer has been refunded. Our team will arrange return of your item.',
     },
     [ORDER_OUTCOME.BUYER_CHANGED_MIND]: {
       buyerTitle: 'Order cancelled',
       buyerBody:
-        'Your order has been cancelled at delivery. Your payment has been refunded, less the applicable Closete handling fee.',
+        'Your order has been cancelled at delivery. Your payment has been refunded in full. Our team will arrange return of the item to the seller.',
       sellerBody: 'The buyer chose not to proceed with the purchase.',
     },
     [ORDER_OUTCOME.OTHERS]: {
       buyerTitle: 'Delivery cancelled',
       buyerBody:
-        'Your order has been cancelled at delivery. Your payment has been refunded, less the applicable Closete handling fee.',
+        'Your order has been cancelled at delivery. Your payment has been refunded in full. Our team will arrange return of the item to the seller.',
       sellerBody:
         'The buyer rejected your item at delivery. Our team will contact you regarding the next steps.',
     },
@@ -613,6 +613,7 @@ const wishlistAvailabilityChanged = async (
               }),
         ),
     );
+
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     errorLogger.error(
@@ -668,7 +669,22 @@ const sellerPayoutConnected = async (userId: string, accountId: string) =>
     data: { screen: 'seller_onboarding', section: 'payout_details' },
   });
 
+const orderCancellation = async (order: OrderNotificationContext, outcome: ORDER_OUTCOME) => {
+  const reason = outcome === ORDER_OUTCOME.SELLER_CANCELLED ? 'the seller requested cancellation' : 'the buyer requested cancellation';
+  return notifyOrderParties(order, NOTIFICATION_TYPE.ORDER_CANCELLED, 'Order cancelled',
+    `Order ${order.orderNumber} was cancelled because ${reason}. A full refund has been issued to the buyer with no fee deduction. The item will not be automatically relisted.`,
+    `order:${idOf(order._id)}:cancelled:${outcome}`);
+};
+const deliveryReattempted = async (order: OrderNotificationContext, issueId: string) =>
+  NotificationService.safeCreateNotification({
+    recipientId: idOf(order.buyer), type: NOTIFICATION_TYPE.ITEM_DISPATCHED,
+    title: 'Delivery re-attempt arranged', body: `Order ${order.orderNumber} is being dispatched for another delivery attempt.`,
+    eventKey: `issue:${issueId}:retry-delivery`, data: buyerOrderData(order),
+  });
+
 export const NotificationEvent = {
+  orderCancellation,
+  deliveryReattempted,
   itemListed,
   itemApproved,
   itemRejected,

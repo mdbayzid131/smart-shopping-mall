@@ -17,6 +17,8 @@ const createIssueZodSchema = z.object({
     })
 
     .superRefine((value, context) => {
+      if (!value.orderId && !value.productId) context.addIssue({ code: z.ZodIssueCode.custom,
+        path: ['orderId'], message: 'An order or product ID is required' });
       const validOutcomes: Record<ISSUE_TYPE, ORDER_OUTCOME[]> = {
         [ISSUE_TYPE.VERIFICATION_FAILED]: [
           ORDER_OUTCOME.AUTHENTICATION_FAILED,
@@ -32,6 +34,9 @@ const createIssueZodSchema = z.object({
           ORDER_OUTCOME.OTHERS,
         ],
         [ISSUE_TYPE.OTHERS]: [ORDER_OUTCOME.OTHERS],
+        [ISSUE_TYPE.BUYER_UNAVAILABLE]: [ORDER_OUTCOME.BUYER_UNAVAILABLE],
+        [ISSUE_TYPE.CONDITION_DIFFERS]: [ORDER_OUTCOME.CONDITION_DIFFERS],
+        [ISSUE_TYPE.CANCELLATION]: [ORDER_OUTCOME.BUYER_CANCELLED, ORDER_OUTCOME.SELLER_CANCELLED],
       };
       if (!validOutcomes[value.issueType].includes(value.outcome)) {
         context.addIssue({
@@ -52,7 +57,7 @@ const createIssueZodSchema = z.object({
 
 const resolveIssueZodSchema = z.object({
   body: z.object({
-    action: z.enum(['delete', 'make_available'], { required_error: 'Action is required' }),
+    action: z.enum(['retry_collection', 'retry_delivery', 'cancel_order', 'dispatch'], { required_error: 'Action is required' }),
   }),
 });
 

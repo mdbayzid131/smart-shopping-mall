@@ -47,14 +47,14 @@ export const ORDER_STATUS_TRANSITIONS: Record<ORDER_STATUS, ORDER_STATUS[]> = {
     ORDER_STATUS.REFUNDED,
     ORDER_STATUS.CANCELLED,
   ],
-  [ORDER_STATUS.DELIVERED]: [ORDER_STATUS.COMPLETED, ORDER_STATUS.REFUNDED],
+  [ORDER_STATUS.DELIVERED]: [],
   [ORDER_STATUS.COMPLETED]: [],
   [ORDER_STATUS.REFUNDED]: [],
   [ORDER_STATUS.CANCELLED]: [],
 };
 
 
-// Statuses that, once entered, trigger an automatic Stripe refund + relist the product.
+// Terminal cancellation/refund states. Confirmed cancellations do not relist products.
 export const REFUND_TRIGGER_STATUSES: ORDER_STATUS[] = [
   ORDER_STATUS.REFUNDED,
   ORDER_STATUS.CANCELLED,

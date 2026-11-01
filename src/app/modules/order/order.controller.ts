@@ -110,6 +110,21 @@ const markPayoutPaid = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const confirmDelivery = catchAsync(async (req: Request, res: Response) => {
+  const user = req.user as any;
+  const result = await OrderService.confirmDeliveryAndPayout(
+    req.params.id,
+    user.id,
+  );
+
+  sendResponse(res, {
+    success: true,
+    statusCode: StatusCodes.OK,
+    message: 'Delivery confirmed and seller payout released',
+    data: result,
+  });
+});
+
 const reportMissedCollection = catchAsync(
   async (req: Request, res: Response) => {
     const user = req.user as any;
@@ -162,6 +177,7 @@ export const OrderController = {
   getAllOrdersForAdmin,
   updateOrderStatus,
   updateOrderSchedule,
+  confirmDelivery,
   markPayoutPaid,
   reportMissedCollection,
   cancelOrder,

@@ -1,7 +1,7 @@
 import { PipelineStage } from 'mongoose';
 
-export const WARDROBE_REVIEW_STATUSES = ['pending_review', 'under_review'];
-export const WARDROBE_SOLD_STATUSES = ['sold', 'delivered', 'completed', 'refunded'];
+export const WARDROBE_SOLD_STATUSES = ['sold', 'delivered', 'completed'];
+export const WARDROBE_REFUNDED_STATUSES = ['refunded', 'cancelled'];
 export const ACTIVE_CLOSET_STATUSES = [
   'pending_review', 'under_review', 'live', 'available', 'reserved', 'secured',
   'collected', 'authenticated', 'dispatched',
@@ -36,10 +36,10 @@ export const wardrobeSortStages = (): PipelineStage[] => [
       _wardrobePriority: {
         $switch: {
           branches: [
-            { case: { $in: ['$_wardrobeStatus', WARDROBE_REVIEW_STATUSES] }, then: 0 },
-            { case: { $in: ['$_wardrobeStatus', WARDROBE_SOLD_STATUSES] }, then: 2 },
+            { case: { $in: ['$_wardrobeStatus', WARDROBE_SOLD_STATUSES] }, then: 1 },
+            { case: { $in: ['$_wardrobeStatus', WARDROBE_REFUNDED_STATUSES] }, then: 2 },
           ],
-          default: 1,
+          default: 0,
         },
       },
     },

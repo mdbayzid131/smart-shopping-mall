@@ -1,4 +1,7 @@
-import { buildConfirmedOrderFilter } from './order-history.util';
+import {
+  buildConfirmedOrderFilter,
+  orderHistorySortStages,
+} from './order-history.util';
 import mongoose from 'mongoose';
 import { StatusCodes } from 'http-status-codes';
 import { JwtPayload } from 'jsonwebtoken';
@@ -24,7 +27,7 @@ import {
   retrieveConnectedAccount,
 } from '../../../integrations/stripe';
 import { logger } from '../../../shared/logger';
-import QueryBuilder from '../../builder/QueryBuilder';
+import QueryBuilder, { normalizePagination } from '../../builder/QueryBuilder';
 import { Product } from '../product/product.model';
 import { invalidateProductCaches } from '../product/product-state-sync';
 import {
@@ -644,26 +647,40 @@ const getMyOrders = async (
   role: 'buyer' | 'seller',
   query: Record<string, unknown>,
 ) => {
-  const owner = role === 'seller' ? { seller: userId } : { buyer: userId };
+  const historyOwnerId = mongoose.isValidObjectId(userId)
+    ? new mongoose.Types.ObjectId(userId)
+    : userId;
+  const owner = role === 'seller'
+    ? { seller: historyOwnerId }
+    : { buyer: historyOwnerId };
   // Reconcile successful wallet payments before hiding unfinished attempts.
   const pending = await Order.find({ ...owner, status: ORDER_STATUS.PENDING_PAYMENT })
     .sort({ createdAt: -1 }).limit(20).lean();
   for (const order of pending) await reconcilePendingOrder(order);
   const filter = buildConfirmedOrderFilter(owner);
 
-  const orderQuery = new QueryBuilder(Order.find(filter), query)
-    .sort()
-    .paginate();
-
-  const [rawResult, meta] = await Promise.all([
-    orderQuery.modelQuery
-      .select('_id orderNumber status price product payment outcome note cancellationReason createdAt updatedAt')
-      .populate('product', '_id name brand price images image status')
-      .lean(),
-    orderQuery.getPaginationInfo(),
+  const { page, limit } = normalizePagination(query);
+  const [orderedIds, total] = await Promise.all([
+    Order.aggregate([
+      { $match: filter },
+      ...orderHistorySortStages(query),
+    ]),
+    Order.countDocuments(filter),
   ]);
-
-  const result = rawResult || [];
+  const ids = orderedIds.map(row => row._id);
+  const unorderedResult = ids.length
+    ? await Order.find({ _id: { $in: ids } })
+        .select('_id orderNumber status price product payment outcome note cancellationReason createdAt updatedAt')
+        .populate('product', '_id name brand price images image status')
+        .lean()
+    : [];
+  const resultById = new Map(
+    unorderedResult.map(order => [order._id.toString(), order]),
+  );
+  const result = ids
+    .map(id => resultById.get(id.toString()))
+    .filter(Boolean);
+  const meta = { total, limit, page, totalPage: Math.ceil(total / limit) };
 
   return { result: (result || []).map(toOrderListItem), meta };
 };

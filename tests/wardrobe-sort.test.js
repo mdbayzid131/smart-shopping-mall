@@ -54,7 +54,7 @@ function aggregate(rows, pipeline, orders = []) {
   return result;
 }
 
-test('wardrobe sorts review first, newest unsold next and sold last across pages', async t => {
+test('wardrobe sorts active first, sold next and refunded last across pages', async t => {
   const seller = new Types.ObjectId();
   const rows = [
     ['sold-new', 'sold', '2026-10-26'],
@@ -84,8 +84,8 @@ test('wardrobe sorts review first, newest unsold next and sold last across pages
     assert.equal(response.meta.totalPage, 4);
     names.push(...response.result.map(row => row.name));
   }
-  assert.deepEqual(names, ['review-new', 'review-old', 'reserved-new', 'live-old',
-    'refunded-review', 'refunded-new', 'sold-new', 'sold-old']);
+  assert.deepEqual(names, ['reserved-new', 'review-new', 'review-old', 'live-old',
+    'sold-new', 'sold-old', 'refunded-review', 'refunded-new']);
 
   const filtered = await ProductService.getMyProductsFromDB(seller.toString(), { status: 'live' });
   assert.deepEqual(filtered.result.map(row => row.name), ['live-old']);

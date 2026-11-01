@@ -71,9 +71,10 @@ test('paid cancellations still refund the buyer and notify the order parties', a
   assert.equal(notify.mock.callCount(), 1);
 });
 
-test('buyer and seller pagination totals count confirmed orders only', async t => {
+test('buyer and seller histories paginate active, delivered, then refunded', async t => {
   const rows = [
     { _id: 'paid', buyer: 'buyer-1', seller: 'seller-1', status: 'reserved', payment: { status: 'paid' } },
+    { _id: 'delivered', buyer: 'buyer-1', seller: 'seller-1', status: 'delivered', payment: { status: 'paid' } },
     { _id: 'refund', buyer: 'buyer-1', seller: 'seller-1', status: 'cancelled', payment: { status: 'refunded' } },
     { _id: 'abandoned', buyer: 'buyer-1', seller: 'seller-1', status: 'cancelled', payment: { status: 'pending' } },
     { _id: 'pending', buyer: 'buyer-1', seller: 'seller-1', status: 'pending_payment', payment: { status: 'pending' } },
@@ -90,11 +91,22 @@ test('buyer and seller pagination totals count confirmed orders only', async t =
     async lean() { return rows.filter(sift(this.filter)).slice(this.offset, this.offset + this.size); }
   }
   t.mock.method(Order, 'find', filter => new Query(filter));
+  t.mock.method(Order, 'aggregate', async pipeline => {
+    const match = pipeline[0].$match;
+    const skip = pipeline.find(stage => stage.$skip)?.$skip ?? 0;
+    const limit = pipeline.find(stage => stage.$limit)?.$limit ?? 20;
+    const priority = row => row.payment.status === 'refunded' || ['refunded', 'cancelled'].includes(row.status)
+      ? 2 : ['delivered', 'completed'].includes(row.status) ? 1 : 0;
+    return rows.filter(sift(match)).sort((a, b) => priority(a) - priority(b))
+      .slice(skip, skip + limit).map(row => ({ _id: row._id }));
+  });
   t.mock.method(Order, 'countDocuments', async filter => rows.filter(sift(filter)).length);
   for (const [userId, role] of [['buyer-1', 'buyer'], ['seller-1', 'seller']]) {
-    const response = await OrderService.getMyOrders(userId, role, { page: '2', limit: '1' });
-    assert.equal(response.meta.total, 2);
-    assert.equal(response.meta.totalPage, 2);
-    assert.deepEqual(response.result.map(order => order._id), ['refund']);
+    const deliveredPage = await OrderService.getMyOrders(userId, role, { page: '2', limit: '1' });
+    assert.equal(deliveredPage.meta.total, 3);
+    assert.equal(deliveredPage.meta.totalPage, 3);
+    assert.deepEqual(deliveredPage.result.map(order => order._id), ['delivered']);
+    const refundPage = await OrderService.getMyOrders(userId, role, { page: '3', limit: '1' });
+    assert.deepEqual(refundPage.result.map(order => order._id), ['refund']);
   }
 });

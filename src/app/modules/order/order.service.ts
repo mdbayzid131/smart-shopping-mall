@@ -839,7 +839,7 @@ const getAllOrdersForAdmin = async (query: Record<string, unknown>) => {
   const filterQuery: Record<string, unknown> = { ...query };
   if (!filterQuery.status) {
     filterQuery.status = {
-      $nin: [ORDER_STATUS.CANCELLED, ORDER_STATUS.REFUNDED],
+      $nin: [ORDER_STATUS.PENDING_PAYMENT, ORDER_STATUS.CANCELLED, ORDER_STATUS.REFUNDED],
     };
   }
 

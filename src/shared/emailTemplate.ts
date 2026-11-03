@@ -9,9 +9,7 @@ import {
 
 const getProjectName = () => config.branding.projectName;
 
-const getLogoUrl = () =>
-  config.branding.logoUrl ||
-  `${config.api_public_url}/uploads/closet_logo.svg`;
+const getLogoUrl = () => config.branding.logoUrl || '';
 
 const uniqueTransactionalSubject = (subject: string) =>
   `${subject} ${crypto.randomUUID().slice(0, 8).toUpperCase()}`;

@@ -16,6 +16,8 @@ export const formatSeller = (seller: any) => {
   }
 
   const resolvedPhone = phone || contact || null;
+  const stripeAccountId = seller.stripeAccountId || null;
+  const payoutsEnabled = Boolean(seller.payoutsEnabled || stripeAccountId);
 
   return {
     _id: _id?.toString(),
@@ -25,6 +27,8 @@ export const formatSeller = (seller: any) => {
     phone: resolvedPhone,
     location: location || null,
     country: country || 'UAE',
+    stripeAccountId,
+    payoutsEnabled,
   };
 };
 

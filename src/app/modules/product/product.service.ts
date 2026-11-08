@@ -157,7 +157,7 @@ const createProductToDB = async (
   await User.findByIdAndUpdate(created.seller, { $min: { sellingStartedAt: created.get('createdAt') || new Date() } })
     .catch(() => undefined);
   const result = await Product.findById(created._id)
-    .populate('seller', 'name image avatar contact phone location country')
+    .populate('seller', 'name image avatar contact phone location country stripeAccountId payoutsEnabled')
     .lean();
   invalidateProductCaches(created._id.toString());
   void NotificationEvent.itemListed(
@@ -226,7 +226,7 @@ const getAllProductsFromDB = async (
 
       const [result, meta] = await Promise.all([
         productQuery.modelQuery
-          .populate('seller', 'name image avatar contact phone location country')
+          .populate('seller', 'name image avatar contact phone location country stripeAccountId payoutsEnabled')
           .lean(),
         productQuery.getPaginationInfo(),
       ]);
@@ -437,7 +437,7 @@ const getProductDetailsFromDB = async (id: string) => {
   const cacheKey = `${PRODUCT_DETAIL_CACHE_PREFIX}${id}`;
   return cache.getOrSet(cacheKey, PRODUCT_DETAIL_CACHE_TTL_MS, async () => {
     const result = await Product.findById(id)
-      .populate('seller', 'name image avatar contact phone location country')
+      .populate('seller', 'name image avatar contact phone location country stripeAccountId payoutsEnabled')
       .populate('buyer', 'name image avatar contact phone location country address')
       .lean();
     if (!result) {

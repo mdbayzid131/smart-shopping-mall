@@ -1185,6 +1185,7 @@ const confirmDeliveryAndPayout = async (orderId: string, adminId: string) =>
         order.sellerPayout,
         seller.stripeAccountId,
         order.orderNumber,
+        account.default_currency,
       );
 
       await synchronizeProductStatusMutation(
@@ -1216,7 +1217,12 @@ const confirmDeliveryAndPayout = async (orderId: string, adminId: string) =>
       order.payoutFailureReason =
         error instanceof Error ? error.message : 'Stripe transfer failed';
       await order.save();
-      throw error;
+      const reason =
+        error instanceof Error ? error.message : 'Stripe transfer failed';
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        `Delivery confirmation and payout could not be completed: ${reason}`,
+      );
     }
   });
 
@@ -1255,6 +1261,7 @@ const paySeller = async (order: InstanceType<typeof Order>) => {
       order.sellerPayout,
       seller.stripeAccountId,
       order.orderNumber,
+      account.default_currency,
     );
     order.payoutTransferId = transfer.id;
     order.payoutStatus = PAYOUT_STATUS.PAID;
@@ -1266,7 +1273,12 @@ const paySeller = async (order: InstanceType<typeof Order>) => {
     order.payoutFailureReason =
       error instanceof Error ? error.message : 'Stripe transfer failed';
     await order.save();
-    throw error;
+    const reason =
+      error instanceof Error ? error.message : 'Stripe transfer failed';
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      `Seller payout could not be completed: ${reason}`,
+    );
   }
 };
 

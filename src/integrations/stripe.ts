@@ -148,17 +148,64 @@ export const createSellerTransfer = async (
   amount: number,
   destination: string,
   orderNumber: string,
-) =>
-  stripeClient.transfers.create(
-    {
-      amount: toMinorUnits(amount),
-      currency: config.stripe.currency,
-      destination,
-      transfer_group: orderNumber,
-      metadata: { orderNumber },
-    },
-    { idempotencyKey: `seller-payout:${orderNumber}` },
-  );
+  destinationCurrency?: string,
+) => {
+  const preferredCurrency = (config.stripe.currency || 'aed').toLowerCase();
+
+  try {
+    // 1. Primary attempt: transfer in the primary platform currency (AED)
+    return await stripeClient.transfers.create(
+      {
+        amount: toMinorUnits(amount),
+        currency: preferredCurrency,
+        destination,
+        transfer_group: orderNumber,
+        metadata: { orderNumber },
+      },
+      { idempotencyKey: `seller-payout:${orderNumber}` },
+    );
+  } catch (err: any) {
+    const isCurrencyOrBalanceIssue =
+      err?.message?.includes('insufficient available funds') ||
+      err?.message?.includes('currency of source_transaction') ||
+      err?.message?.includes('same as the transfer currency') ||
+      (destinationCurrency && destinationCurrency.toLowerCase() !== preferredCurrency);
+
+    if (isCurrencyOrBalanceIssue) {
+      // Check platform balance to see which currencies have available funds
+      const balance = await stripeClient.balance.retrieve().catch(() => null);
+      const availableCurrencies =
+        balance?.available?.map(b => b.currency.toLowerCase()) || [];
+      const hasPreferredBalance = availableCurrencies.includes(preferredCurrency);
+
+      // If no available balance in AED, but platform has USD (e.g. in test mode with US Stripe account):
+      if (!hasPreferredBalance && availableCurrencies.includes('usd')) {
+        const destCurr = (destinationCurrency || 'usd').toLowerCase();
+        // Pegged conversion rate AED to USD: 1 USD = 3.6725 AED
+        const convertedAmount =
+          preferredCurrency === 'aed' && destCurr === 'usd'
+            ? Number((amount / 3.6725).toFixed(2))
+            : amount;
+
+        return await stripeClient.transfers.create(
+          {
+            amount: toMinorUnits(convertedAmount),
+            currency: 'usd',
+            destination,
+            transfer_group: orderNumber,
+            metadata: {
+              orderNumber,
+              convertedFrom: `${amount} ${preferredCurrency.toUpperCase()}`,
+            },
+          },
+          { idempotencyKey: `seller-payout-usd:${orderNumber}` },
+        );
+      }
+    }
+
+    throw err;
+  }
+};
 
 export const reverseSellerTransfer = async (
   transferId: string,

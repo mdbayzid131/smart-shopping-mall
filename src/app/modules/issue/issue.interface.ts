@@ -3,6 +3,8 @@ import { ISSUE_TYPE } from '../../../enums/issue';
 import { ORDER_OUTCOME } from '../../../enums/order';
 
 export type IIssue = {
+  order?: Types.ObjectId;
+  orderNumber?: string;
   product: Types.ObjectId;
   buyer?: Types.ObjectId;
   seller: Types.ObjectId;
@@ -11,4 +13,8 @@ export type IIssue = {
   reason: string;
   admin: Types.ObjectId;
   resolved: boolean;
+  resolvedAt?: Date;
+  resolvedBy?: Types.ObjectId;
+  resolutionAction?: string;
+  retainNote?: boolean;
 }

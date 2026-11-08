@@ -6,6 +6,7 @@ import {
   detachPaymentMethod as detachStripePaymentMethod,
   listCustomerCardPaymentMethods,
   retrieveCustomerPaymentMethod,
+  retrieveStripeCustomer,
 } from '../../../integrations/stripe';
 import { errorLogger } from '../../../shared/logger';
 import { User } from '../user/user.model';
@@ -65,7 +66,18 @@ const getEligibleUser = async (userId: string) => {
 
 const getOrCreateCustomerId = async (userId: string) => {
   const user = await getEligibleUser(userId);
-  if (user.stripeCustomerId) return user.stripeCustomerId;
+  if (user.stripeCustomerId) {
+    try {
+      const existing = await retrieveStripeCustomer(user.stripeCustomerId);
+      if (existing && !('deleted' in existing && existing.deleted)) {
+        return user.stripeCustomerId;
+      }
+    } catch {
+      errorLogger.warn(
+        `[PAYMENT_METHOD] stripeCustomerId ${user.stripeCustomerId} not found in Stripe. Auto-creating new customer.`,
+      );
+    }
+  }
 
   let customerId: string;
   try {
@@ -75,27 +87,15 @@ const getOrCreateCustomerId = async (userId: string) => {
     return throwPaymentProviderError('create customer', error);
   }
 
-  const updatedUser = await User.findOneAndUpdate(
-    {
-      _id: userId,
-      $or: [
-        { stripeCustomerId: { $exists: false } },
-        { stripeCustomerId: null },
-      ],
-    },
+  const updatedUser = await User.findByIdAndUpdate(
+    userId,
     { $set: { stripeCustomerId: customerId } },
     { new: true },
   ).select('+stripeCustomerId');
 
   if (updatedUser?.stripeCustomerId) return updatedUser.stripeCustomerId;
 
-  const currentUser = await getEligibleUser(userId);
-  if (currentUser.stripeCustomerId) return currentUser.stripeCustomerId;
-
-  throw new ApiError(
-    StatusCodes.INTERNAL_SERVER_ERROR,
-    'Unable to initialize payment profile',
-  );
+  return customerId;
 };
 
 const getPaymentMethods = async (
@@ -129,7 +129,10 @@ const getPaymentMethods = async (
           ? cards[cards.length - 1].id
           : null,
     };
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.code === 'resource_missing' || error?.statusCode === 404) {
+      return { paymentMethods: [], hasMore: false, nextCursor: null };
+    }
     return throwPaymentProviderError('list cards', error);
   }
 };

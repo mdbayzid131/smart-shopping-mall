@@ -29,7 +29,7 @@ import {
   isValidFixedTestOtp,
 } from '../../../helpers/fixedTestOtp';
 
-const OTP_TTL_MS = 5 * 60 * 1000; // 5 minutes
+export const OTP_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000; // 60 seconds between requests / resends
 const OTP_MAX_ATTEMPTS = 6;
 
@@ -64,6 +64,7 @@ const buildAuthTokens = (user: {
 type IAccountStatus = {
   verified: boolean;
   status: string;
+  statusReason?: string;
   email: string;
   role: USER_ROLES;
 };
@@ -83,7 +84,7 @@ function ensureAccountStatus<T extends IAccountStatus>(
   if (user.status === 'ban' || user.status === 'suspended') {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
-      'You don’t have permission to access this content. It looks like your account has been deactivated.',
+      `Account suspended. ${user.statusReason || 'Your account is currently blocked.'} Contact Closete Support if you believe this is an error.`,
     );
   }
   if (!allowUser && !ADMIN_ROLES.has(user.role)) {
@@ -106,7 +107,7 @@ const ensurePasswordlessUser = (user: IAccountStatus) => {
 const hashOtp = async (otp: number | string): Promise<string> =>
   bcrypt.hash(String(otp), Number(config.bcrypt_salt_rounds));
 
-const buildLoginOtpDoc = async (
+export const buildLoginOtpDoc = async (
   plainOtp: number,
   extra?: Partial<Pick<ILoginOtp, 'resentCount' | 'attemptCount'>>,
 ): Promise<ILoginOtp> => ({
@@ -154,18 +155,13 @@ const loginUserFromDB = async (payload: ILoginData) => {
 // ----------------- PASSWORDLESS LOGIN OTP FLOW -----------------
 const requestLoginOtpToDB = async (payload: IRequestLoginOtp) => {
   const email = payload.email.toLowerCase().trim();
-  let user = await User.findOne({ email }).select('+loginOtp');
-  let createdPendingUser = false;
+  const user = await User.findOne({ email }).select('+loginOtp');
 
   if (!user) {
-    user = await User.create({
-      email,
-      name: '',
-      role: USER_ROLES.USER,
-      verified: false,
-      status: 'active',
-    });
-    createdPendingUser = true;
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "User doesn't exist! Please sign up first.",
+    );
   }
 
   ensureAccountStatus(user, { requireVerified: false, allowUser: true });
@@ -193,14 +189,12 @@ const requestLoginOtpToDB = async (payload: IRequestLoginOtp) => {
       logger.info(
         `[AUTH] Passwordless OTP generated & emailed to ${email} (expires ${OTP_TTL_MS / 60000}m)`,
       );
-    } catch (err) {
+    } catch (err: any) {
       errorLogger.error(`[AUTH] Failed to send login OTP email to ${email}`, err);
-      if (createdPendingUser) {
-        await User.deleteOne({ _id: user._id, verified: false });
-      }
+      const errDetail = err?.message ? ` (${err.message})` : '';
       throw new ApiError(
         StatusCodes.INTERNAL_SERVER_ERROR,
-        'Failed to send sign-in code. Please try again later.',
+        `Failed to send sign-in code${errDetail}. Please check email configuration.`,
       );
     }
   }
@@ -659,10 +653,10 @@ const refreshTokenToDB = async (token: string) => {
     throw new ApiError(StatusCodes.UNAUTHORIZED, "User doesn't exist!");
   }
 
-  if (isExistUser.status === 'ban') {
+  if (isExistUser.status === 'ban' || isExistUser.status === 'suspended') {
     throw new ApiError(
       StatusCodes.UNAUTHORIZED,
-      'Your account has been deactivated.',
+      `Account suspended. ${isExistUser.statusReason || 'Your account is blocked.'} Contact Closete Support to request a review.`,
     );
   }
 

@@ -31,7 +31,7 @@ test('authentication failure refunds the full payment', () => {
   );
 });
 
-test('delivery rejection retains the configured order handling fee', () => {
+test('client cancellation/refund workflow does not deduct an unapproved handling fee', () => {
   const order = { price: 3200, sellerPayout: 2816 };
   for (const outcome of [
     ORDER_OUTCOME.NOT_AS_DESCRIBED,
@@ -39,7 +39,7 @@ test('delivery rejection retains the configured order handling fee', () => {
     ORDER_OUTCOME.BUYER_CHANGED_MIND,
     ORDER_OUTCOME.OTHERS,
   ]) {
-    assert.equal(refundAmountForOutcome(order, outcome), 2816);
+    assert.equal(refundAmountForOutcome(order, outcome), 3200);
   }
 });
 

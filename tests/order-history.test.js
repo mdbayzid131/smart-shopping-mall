@@ -1,0 +1,112 @@
+const assert = require('node:assert/strict');
+const test = require('node:test');
+const sift = require('sift').default;
+const { Types } = require('mongoose');
+const { buildConfirmedOrderFilter } = require('../dist/app/modules/order/order-history.util');
+const nodemailer = require('nodemailer');
+test.mock.method(nodemailer, 'createTransport', () => ({ verify: () => {}, sendMail: async () => ({}) }));
+const { OrderService } = require('../dist/app/modules/order/order.service');
+const { Order } = require('../dist/app/modules/order/order.model');
+const { Product } = require('../dist/app/modules/product/product.model');
+const { NotificationEvent } = require('../dist/app/modules/notification/notification.event');
+const stripe = require('../dist/integrations/stripe');
+
+test('buyer and seller histories exclude abandoned wallets but retain genuine cancellations', () => {
+  const rows = [
+    { id: 'wallet-open', status: 'pending_payment', payment: { status: 'pending' } },
+    { id: 'wallet-closed', status: 'cancelled', payment: { status: 'pending' } },
+    { id: 'failed', status: 'cancelled', payment: { status: 'failed' } },
+    { id: 'paid', status: 'reserved', payment: { status: 'paid' } },
+    { id: 'delivered', status: 'delivered', payment: { status: 'paid' } },
+    { id: 'cancelled-after-payment', status: 'cancelled', payment: { status: 'refunded' } },
+    { id: 'refunded', status: 'refunded', payment: { status: 'refunded' } },
+  ].map(row => ({ ...row, buyer: 'buyer-1', seller: 'seller-1' }));
+  for (const scope of [{ buyer: 'buyer-1' }, { seller: 'seller-1' }]) {
+    assert.deepEqual(rows.filter(sift(buildConfirmedOrderFilter(scope))).map(row => row.id),
+      ['paid', 'delivered', 'cancelled-after-payment', 'refunded']);
+  }
+  assert.deepEqual(rows.filter(sift(buildConfirmedOrderFilter({ buyer: 'someone-else' }))), []);
+});
+
+test('unpaid wallet cancellation releases the item without cancellation or wishlist alerts', async t => {
+  const buyer = new Types.ObjectId();
+  const order = {
+    _id: new Types.ObjectId(), buyer, product: new Types.ObjectId(), status: 'pending_payment',
+    payment: { status: 'pending', paymentIntentId: 'pi_pending' },
+  };
+  t.mock.method(Order, 'findById', async () => order);
+  t.mock.method(Order, 'findOneAndUpdate', async () => ({ ...order, status: 'cancelled' }));
+  const release = t.mock.method(Product, 'findOneAndUpdate', async () => ({ status: 'live' }));
+  const cancel = t.mock.method(stripe, 'cancelPaymentIntent', async () => ({}));
+  const refund = t.mock.method(stripe, 'createRefund', async () => ({}));
+  const notify = t.mock.method(NotificationEvent, 'orderStatusChanged', async () => {});
+  const wishlist = t.mock.method(NotificationEvent, 'wishlistAvailabilityChanged', async () => {});
+  await OrderService.cancelOrder(order._id.toString(), buyer.toString());
+  assert.equal(cancel.mock.callCount(), 1);
+  assert.equal(refund.mock.callCount(), 0);
+  assert.equal(release.mock.calls[0].arguments[1].$set.status, 'live');
+  assert.equal(notify.mock.callCount(), 0);
+  assert.equal(wishlist.mock.callCount(), 0);
+});
+
+test('paid cancellations still refund the buyer and notify the order parties', async t => {
+  const buyer = new Types.ObjectId();
+  const order = {
+    _id: new Types.ObjectId(), buyer, product: new Types.ObjectId(), status: 'reserved',
+    seller: new Types.ObjectId(), price: 100, sellerPayout: 88, orderNumber: 'CLT-test',
+    payment: { status: 'paid', paymentIntentId: 'pi_paid' }, statusHistory: [], save: async () => {},
+  };
+  t.mock.method(Order, 'findById', async () => order);
+  t.mock.method(Product, 'findByIdAndUpdate', async () => ({ status: 'live' }));
+  const refund = t.mock.method(stripe, 'createRefund', async () => ({}));
+  t.mock.method(Order.collection, 'findOneAndUpdate', async () => ({}));
+  t.mock.method(Order.collection, 'updateOne', async () => ({}));
+  t.mock.method(require('../dist/app/modules/issue/issue.model').Issue, 'exists', async () => null);
+  const notify = t.mock.method(NotificationEvent, 'orderCancellation', async () => {});
+  t.mock.method(NotificationEvent, 'wishlistAvailabilityChanged', async () => {});
+  await OrderService.cancelOrder(order._id.toString(), buyer.toString());
+  assert.equal(refund.mock.callCount(), 1);
+  assert.equal(order.payment.status, 'refunded');
+  assert.equal(order.status, 'refunded');
+  assert.equal(notify.mock.callCount(), 1);
+});
+
+test('buyer and seller histories paginate active, delivered, then refunded', async t => {
+  const rows = [
+    { _id: 'paid', buyer: 'buyer-1', seller: 'seller-1', status: 'reserved', payment: { status: 'paid' } },
+    { _id: 'delivered', buyer: 'buyer-1', seller: 'seller-1', status: 'delivered', payment: { status: 'paid' } },
+    { _id: 'refund', buyer: 'buyer-1', seller: 'seller-1', status: 'cancelled', payment: { status: 'refunded' } },
+    { _id: 'abandoned', buyer: 'buyer-1', seller: 'seller-1', status: 'cancelled', payment: { status: 'pending' } },
+    { _id: 'pending', buyer: 'buyer-1', seller: 'seller-1', status: 'pending_payment', payment: { status: 'pending' } },
+    { _id: 'another-user', buyer: 'buyer-2', seller: 'seller-2', status: 'reserved', payment: { status: 'paid' } },
+  ];
+  class Query {
+    constructor(filter) { this.filter = filter; this.offset = 0; this.size = 20; this.model = Order; }
+    sort() { return this; }
+    skip(value) { this.offset = value; return this; }
+    limit(value) { this.size = value; return this; }
+    select() { return this; }
+    populate() { return this; }
+    getFilter() { return this.filter; }
+    async lean() { return rows.filter(sift(this.filter)).slice(this.offset, this.offset + this.size); }
+  }
+  t.mock.method(Order, 'find', filter => new Query(filter));
+  t.mock.method(Order, 'aggregate', async pipeline => {
+    const match = pipeline[0].$match;
+    const skip = pipeline.find(stage => stage.$skip)?.$skip ?? 0;
+    const limit = pipeline.find(stage => stage.$limit)?.$limit ?? 20;
+    const priority = row => row.payment.status === 'refunded' || ['refunded', 'cancelled'].includes(row.status)
+      ? 2 : ['delivered', 'completed'].includes(row.status) ? 1 : 0;
+    return rows.filter(sift(match)).sort((a, b) => priority(a) - priority(b))
+      .slice(skip, skip + limit).map(row => ({ _id: row._id }));
+  });
+  t.mock.method(Order, 'countDocuments', async filter => rows.filter(sift(filter)).length);
+  for (const [userId, role] of [['buyer-1', 'buyer'], ['seller-1', 'seller']]) {
+    const deliveredPage = await OrderService.getMyOrders(userId, role, { page: '2', limit: '1' });
+    assert.equal(deliveredPage.meta.total, 3);
+    assert.equal(deliveredPage.meta.totalPage, 3);
+    assert.deepEqual(deliveredPage.result.map(order => order._id), ['delivered']);
+    const refundPage = await OrderService.getMyOrders(userId, role, { page: '3', limit: '1' });
+    assert.deepEqual(refundPage.result.map(order => order._id), ['refund']);
+  }
+});

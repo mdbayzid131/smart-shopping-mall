@@ -14,7 +14,8 @@ const addToWishlist = catchAsync(async (req: Request, res: Response) => {
     statusCode: StatusCodes.CREATED,
     message: 'Product added to wishlist',
     data: {
-      ...result.wishlist.toJSON(),
+      _id: result.wishlist._id?.toString(),
+      product: req.params.productId,
       wishlistCount: result.wishlistCount,
     },
   });

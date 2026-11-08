@@ -11,7 +11,31 @@ const {
   invalidateAllProductCaches,
   publishProductWishlistCount,
   synchronizeProductStatusMutation,
+  PRODUCT_DELETED_EVENT,
+  publishProductDeleted,
 } = require('../dist/app/modules/product/product-state-sync.js');
+
+test('deleting a product invalidates feed and detail caches and broadcasts its ID', () => {
+  const productId = 'deleted-product';
+  const listKey = `${PRODUCT_LIST_CACHE_PREFIX}delete-view`;
+  const detailKey = `${PRODUCT_DETAIL_CACHE_PREFIX}${productId}`;
+  cache.set(listKey, [productId], 10_000);
+  cache.set(detailKey, { id: productId }, 10_000);
+  const emitted = [];
+  const original = socketHelper.emitToAll;
+  socketHelper.emitToAll = (event, payload) => emitted.push({ event, payload });
+  try {
+    publishProductDeleted(productId);
+    assert.equal(cache.get(listKey), undefined);
+    assert.equal(cache.get(detailKey), undefined);
+    assert.equal(emitted.length, 1);
+    assert.equal(emitted[0].event, PRODUCT_DELETED_EVENT);
+    assert.equal(emitted[0].payload.productId, productId);
+    assert.equal(emitted[0].payload.status, 'deleted');
+  } finally {
+    socketHelper.emitToAll = original;
+  }
+});
 
 test('profile changes invalidate product feeds and populated product details', () => {
   const listKey = `${PRODUCT_LIST_CACHE_PREFIX}profile-view`;

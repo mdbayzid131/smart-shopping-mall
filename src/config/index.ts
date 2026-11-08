@@ -1,17 +1,17 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { z } from 'zod';
 
-const environmentPath = path.join(process.cwd(), '.env');
-const environmentResult = dotenv.config({
-  path: environmentPath,
-  // Local development must use the selected workspace .env file even when
-  // the parent terminal has stale variables. Production keeps injected secrets.
-  override: process.env.NODE_ENV !== 'production',
-});
 
-if (environmentResult.error && process.env.NODE_ENV !== 'production') {
-  throw new Error(`Unable to load environment file: ${environmentPath}`);
+const environmentPath = path.join(process.cwd(), '.env');
+if (fs.existsSync(environmentPath)) {
+  dotenv.config({
+    path: environmentPath,
+    override: process.env.NODE_ENV !== 'production',
+  });
+} else {
+  dotenv.config();
 }
 
 const optionalUrl = z.string().url().optional();
@@ -25,11 +25,21 @@ const firebaseServiceAccountSchema = z.object({
 });
 
 const decodeFirebaseServiceAccount = (encodedValue?: string) => {
-  if (!encodedValue) return null;
+  if (!encodedValue?.trim()) return null;
 
   try {
-    const decodedValue = Buffer.from(encodedValue.trim(), 'base64').toString('utf8');
-    const parsedValue: unknown = JSON.parse(decodedValue);
+    let jsonString = encodedValue.trim();
+
+    // 1. If it's a file path that exists on disk
+    if (jsonString.endsWith('.json') && fs.existsSync(jsonString)) {
+      jsonString = fs.readFileSync(jsonString, 'utf8');
+    }
+    // 2. If it's not starting with '{', decode from base64
+    else if (!jsonString.startsWith('{')) {
+      jsonString = Buffer.from(jsonString, 'base64').toString('utf8');
+    }
+
+    const parsedValue: unknown = JSON.parse(jsonString);
     const serviceAccount = firebaseServiceAccountSchema.parse(parsedValue);
 
     return {
@@ -37,12 +47,14 @@ const decodeFirebaseServiceAccount = (encodedValue?: string) => {
       clientEmail: serviceAccount.client_email,
       privateKey: serviceAccount.private_key.replace(/\\n/g, '\n'),
     };
-  } catch {
+  } catch (error) {
+    console.error('Failed to parse Firebase service account:', error);
     throw new Error(
-      'Invalid environment configuration: FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 must contain a Base64-encoded Firebase service-account JSON file',
+      'Invalid environment configuration: FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 must contain a valid Firebase service-account JSON or Base64 string',
     );
   }
 };
+
 
 const envSchema = z
   .object({
@@ -79,7 +91,12 @@ const envSchema = z
     STRIPE_SECRET_KEY: z.string().min(1),
     WEBHOOK_SECRET: z.string().min(1),
     STRIPE_CURRENCY: z.string().length(3).default('aed'),
-    API_PUBLIC_URL: z.string().url(),
+    STRIPE_CONNECT_COUNTRY: z.string().length(2).default('US'),
+    API_PUBLIC_URL: z.preprocess(
+      val => val || process.env.RENDER_EXTERNAL_URL,
+      z.string().url(),
+    ),
+    ENABLE_APP_REVIEW_OTP: z.enum(['true', 'false']).default('false'),
     TEST_FIXED_OTP_EMAIL: z.preprocess(
       emptyStringToUndefined,
       z.string().trim().email().optional(),
@@ -127,25 +144,26 @@ const envSchema = z
         path: ['GOOGLE_OAUTH_CLIENT_ID'],
       });
     }
-    if (env.NODE_ENV === 'production' && env.CORS_ORIGIN.includes('*')) {
+    const fixedOtpValues = [env.TEST_FIXED_OTP_EMAIL, env.TEST_FIXED_OTP_CODE];
+    if (env.ENABLE_APP_REVIEW_OTP === 'true' && !fixedOtpValues.every(Boolean)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'CORS_ORIGIN cannot contain * in production',
-        path: ['CORS_ORIGIN'],
+        message: 'App review OTP requires a configured email and five-digit code',
+        path: ['ENABLE_APP_REVIEW_OTP'],
       });
     }
-    const fixedOtpValues = [env.TEST_FIXED_OTP_EMAIL, env.TEST_FIXED_OTP_CODE];
+    if (env.NODE_ENV === 'production' && fixedOtpValues.some(Boolean) &&
+        env.ENABLE_APP_REVIEW_OTP !== 'true') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Fixed test OTP credentials cannot be enabled in production without ENABLE_APP_REVIEW_OTP=true',
+        path: ['TEST_FIXED_OTP_EMAIL'],
+      });
+    }
     if (fixedOtpValues.some(Boolean) && !fixedOtpValues.every(Boolean)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'TEST_FIXED_OTP_EMAIL and TEST_FIXED_OTP_CODE must be provided together',
-        path: ['TEST_FIXED_OTP_EMAIL'],
-      });
-    }
-    if (env.NODE_ENV === 'production' && fixedOtpValues.some(Boolean)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Fixed test OTP credentials cannot be enabled in production',
         path: ['TEST_FIXED_OTP_EMAIL'],
       });
     }
@@ -214,7 +232,7 @@ export default {
     webhookSecret: env.WEBHOOK_SECRET,
     currency: env.STRIPE_CURRENCY.toLowerCase(),
     publicUrl: env.API_PUBLIC_URL.replace(/\/$/, ''),
-    connectCountry: 'AE',
+    connectCountry: env.STRIPE_CONNECT_COUNTRY,
   },
   firebase: {
     serviceAccount: firebaseServiceAccount,
@@ -223,8 +241,7 @@ export default {
   },
   fixedTestOtp: {
     enabled: Boolean(
-      env.NODE_ENV !== 'production' &&
-        env.TEST_FIXED_OTP_EMAIL &&
+      env.TEST_FIXED_OTP_EMAIL &&
         env.TEST_FIXED_OTP_CODE,
     ),
     email: env.TEST_FIXED_OTP_EMAIL?.toLowerCase() ?? '',

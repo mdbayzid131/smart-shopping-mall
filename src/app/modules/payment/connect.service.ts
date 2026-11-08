@@ -6,10 +6,12 @@ import {
   createConnectedAccount,
   createConnectedAccountLink,
   retrieveConnectedAccount,
+  stripeClient,
 } from '../../../integrations/stripe';
 import { errorLogger } from '../../../shared/logger';
 import { User } from '../user/user.model';
 import { NotificationEvent } from '../notification/notification.event';
+import { Notification } from '../notification/notification.model';
 
 type IStripeErrorDetails = {
   code?: unknown;
@@ -41,10 +43,14 @@ const throwConnectProviderError = (
     .join(' ');
 
   errorLogger.error(`[STRIPE_CONNECT] ${diagnostic}`);
-  throw new ApiError(
-    StatusCodes.SERVICE_UNAVAILABLE,
-    'Seller payout onboarding is currently unavailable',
-  );
+
+  const errorMessage =
+    typeof details?.message === 'string' &&
+    details.message.includes('signed up for Connect')
+      ? 'Stripe Connect is not enabled on this Stripe account. Please enable Connect in your Stripe Dashboard (https://dashboard.stripe.com/connect).'
+      : 'Seller payout onboarding is currently unavailable';
+
+  throw new ApiError(StatusCodes.SERVICE_UNAVAILABLE, errorMessage);
 };
 
 const stateSignature = (payload: string) =>
@@ -89,7 +95,7 @@ const accountStatus = async (userId: string) => {
     _id: userId,
     status: 'active',
     verified: true,
-  }).select('+stripeAccountId');
+  }).select('+stripeAccountId +stripePayoutNotifiedAccountId');
   if (!user) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
@@ -107,9 +113,52 @@ const accountStatus = async (userId: string) => {
   let account: Awaited<ReturnType<typeof retrieveConnectedAccount>>;
   try {
     account = await retrieveConnectedAccount(user.stripeAccountId);
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.code === 'resource_missing' || error?.statusCode === 404) {
+      return {
+        connected: false,
+        detailsSubmitted: false,
+        payoutsEnabled: false,
+        chargesEnabled: false,
+      };
+    }
     return throwConnectProviderError('retrieve account', error);
   }
+  if (account.details_submitted && account.payouts_enabled) {
+    try {
+      // Claim once per account, even if its notification is later deleted.
+      const claim = await User.updateOne(
+        {
+          _id: userId,
+          stripeAccountId: account.id,
+          stripePayoutNotifiedAccountId: { $ne: account.id },
+        },
+        { $set: { stripePayoutNotifiedAccountId: account.id } },
+      );
+      if (claim.modifiedCount) {
+        try {
+          // Preserve the previous version's notification when upgrading.
+          const alreadyNotified = !user.stripePayoutNotifiedAccountId &&
+            await Notification.exists({
+              recipient: userId,
+              eventKey: `seller:${userId}:payout-connected`,
+            });
+          if (!alreadyNotified) {
+            await NotificationEvent.sellerPayoutConnected(userId, account.id);
+          }
+        } catch (error) {
+          await User.updateOne(
+            { _id: userId, stripePayoutNotifiedAccountId: account.id },
+            { $unset: { stripePayoutNotifiedAccountId: 1 } },
+          );
+          throw error;
+        }
+      }
+    } catch (error) {
+      errorLogger.error(`[STRIPE_CONNECT] Verification notification failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
   return {
     connected: true,
     detailsSubmitted: account.details_submitted,
@@ -129,6 +178,26 @@ const assertPayoutReady = async (userId: string) => {
   }
 };
 
+const notifyPayoutRequiredForReservation = async (
+  userId: string,
+  orderId: string,
+) => {
+  try {
+    const status = await accountStatus(userId);
+    if (!status.connected || !status.detailsSubmitted || !status.payoutsEnabled) {
+      await NotificationEvent.sellerOnboardingRequired(userId, orderId);
+    }
+  } catch (error) {
+    // A provider failure must not interrupt a paid order or send a false reminder.
+    errorLogger.error(`[STRIPE_CONNECT] Reservation payout check failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+};
+
+const accountUpdated = async (accountId: string) => {
+  const user = await User.findOne({ stripeAccountId: accountId }).select('_id');
+  if (user) await accountStatus(user._id.toString());
+};
+
 const onboardingLink = async (userId: string) => {
   const user = await User.findOne({
     _id: userId,
@@ -144,6 +213,16 @@ const onboardingLink = async (userId: string) => {
 
   let accountId = user.stripeAccountId;
 
+  if (accountId) {
+    try {
+      await retrieveConnectedAccount(accountId);
+    } catch (error: any) {
+      if (error?.code === 'resource_missing' || error?.statusCode === 404) {
+        accountId = undefined;
+      }
+    }
+  }
+
   if (!accountId) {
     let account: Awaited<ReturnType<typeof createConnectedAccount>>;
     try {
@@ -151,36 +230,13 @@ const onboardingLink = async (userId: string) => {
     } catch (error) {
       return throwConnectProviderError('create account', error);
     }
-    const updatedUser = await User.findOneAndUpdate(
-      {
-        _id: userId,
-        status: 'active',
-        verified: true,
-        $or: [
-          { stripeAccountId: { $exists: false } },
-          { stripeAccountId: null },
-        ],
-      },
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
       { $set: { stripeAccountId: account.id } },
       { new: true },
     ).select('+stripeAccountId');
 
-    accountId = updatedUser?.stripeAccountId;
-    if (!accountId) {
-      const currentUser = await User.findOne({
-        _id: userId,
-        status: 'active',
-        verified: true,
-      }).select('+stripeAccountId');
-      accountId = currentUser?.stripeAccountId;
-    }
-
-    if (!accountId) {
-      throw new ApiError(
-        StatusCodes.INTERNAL_SERVER_ERROR,
-        'Unable to initialize seller payout account',
-      );
-    }
+    accountId = updatedUser?.stripeAccountId || account.id;
   }
 
   const state = createState(userId);
@@ -195,7 +251,6 @@ const onboardingLink = async (userId: string) => {
   } catch (error) {
     return throwConnectProviderError('create account link', error);
   }
-  void NotificationEvent.sellerOnboardingRequired(userId);
   return { url: link.url, expiresAt: link.expires_at };
 };
 
@@ -209,10 +264,34 @@ const refreshFromState = async (state: string) => {
   return onboardingLink(userId);
 };
 
+const disconnectAccount = async (userId: string) => {
+  const user = await User.findById(userId).select('+stripeAccountId');
+  if (!user) {
+    throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
+  }
+
+  if (user.stripeAccountId) {
+    try {
+      await stripeClient.accounts.del(user.stripeAccountId);
+    } catch (err: any) {
+      errorLogger.warn(`[STRIPE_CONNECT] Failed to delete Stripe account ${user.stripeAccountId}: ${err?.message}`);
+    }
+  }
+
+  await User.findByIdAndUpdate(userId, {
+    $unset: { stripeAccountId: 1 },
+  });
+
+  return { success: true, message: 'Payout account disconnected successfully' };
+};
+
 export const ConnectService = {
   onboardingLink,
   accountStatus,
   statusFromState,
   refreshFromState,
   assertPayoutReady,
+  disconnectAccount,
+  notifyPayoutRequiredForReservation,
+  accountUpdated,
 };

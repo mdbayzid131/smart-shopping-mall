@@ -7,6 +7,10 @@ import {
 } from '../../../enums/order';
 import { IOrder } from './order.interface';
 
+const ALL_ORDER_STATUSES = [
+  ...new Set([...Object.values(ORDER_STATUS), 'secured', 'reserved']),
+];
+
 const orderSchema = new Schema<IOrder>(
   {
     orderNumber: { type: String, required: true, unique: true },
@@ -17,6 +21,9 @@ const orderSchema = new Schema<IOrder>(
     platformFee: { type: Number, required: true },
     sellerPayout: { type: Number, required: true },
     note: { type: String, maxlength: 1000 },
+    activeIssue: { type: Schema.Types.ObjectId, ref: 'Issue' },
+    conditionNote: { type: String, maxlength: 1000 },
+    returnStatus: { type: String, enum: ['with_seller', 'awaiting_return'] },
     pickupWindow: {
       start: { type: Date },
       end: { type: Date },
@@ -26,6 +33,7 @@ const orderSchema = new Schema<IOrder>(
       address: { type: String, required: true },
       location: { type: String, required: true },
       phone: { type: String, required: true },
+      country: { type: String, default: 'UAE' },
     },
     payment: {
       provider: { type: String, enum: ['stripe'], default: 'stripe' },
@@ -51,12 +59,18 @@ const orderSchema = new Schema<IOrder>(
     missedCollectionAttempts: { type: Number, min: 0, default: 0 },
     status: {
       type: String,
-      enum: Object.values(ORDER_STATUS),
+      enum: ALL_ORDER_STATUSES,
       default: ORDER_STATUS.PENDING_PAYMENT,
+      set: (v: string) => (v === 'secured' ? ORDER_STATUS.RESERVED : v),
     },
     statusHistory: [
       {
-        status: { type: String, enum: Object.values(ORDER_STATUS), required: true },
+        status: {
+          type: String,
+          enum: ALL_ORDER_STATUSES,
+          required: true,
+          set: (v: string) => (v === 'secured' ? ORDER_STATUS.RESERVED : v),
+        },
         note: { type: String },
         changedAt: { type: Date, default: Date.now },
         changedBy: { type: Schema.Types.ObjectId, ref: 'User' },
@@ -65,6 +79,20 @@ const orderSchema = new Schema<IOrder>(
   },
   { timestamps: true },
 );
+
+orderSchema.pre('validate', function (next) {
+  if ((this.status as any) === 'secured') {
+    this.status = ORDER_STATUS.RESERVED;
+  }
+  if (Array.isArray(this.statusHistory)) {
+    this.statusHistory.forEach((h: any) => {
+      if (h && h.status === 'secured') {
+        h.status = ORDER_STATUS.RESERVED;
+      }
+    });
+  }
+  next();
+});
 
 orderSchema.index({ buyer: 1 });
 orderSchema.index({ seller: 1 });

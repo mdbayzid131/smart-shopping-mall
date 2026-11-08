@@ -1,5 +1,8 @@
-export const buildProductFeedViewerFilter = (viewerId?: string) =>
-  viewerId ? { $and: [{ seller: { $ne: viewerId } }] } : {};
+export const buildProductFeedViewerFilter = (viewerId?: string) => {
+  // Viewer identity must not hide their own live listings.
+  void viewerId;
+  return {};
+};
 
 const sortForStableSerialization = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(sortForStableSerialization);

@@ -5,7 +5,25 @@ import fileUploadHandler from '../../middlewares/fileUploadHandler';
 import validateRequest from '../../middlewares/validateRequest';
 import { UserController } from './user.controller';
 import { UserValidation } from './user.validation';
+import { CustomerService, customerStatusSchema } from './customer.service';
+import catchAsync from '../../../shared/catchAsync';
 const router = express.Router();
+router.get('/admin/customers', auth(USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN), catchAsync(async (req, res) => {
+  const result = await CustomerService.list(req.query);
+  res.json({ success: true, data: result.items, pagination: result.pagination });
+}));
+router.patch('/admin/customers/:id/status', auth(USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN),
+  validateRequest(customerStatusSchema), catchAsync(async (req, res) => {
+    const adminId = (req.user as { id: string }).id;
+    const customer = req.body.status === 'active'
+      ? await CustomerService.unsuspend(req.params.id, adminId)
+      : await CustomerService.suspend(req.params.id, req.body.reason, adminId);
+    res.json({
+      success: true,
+      data: customer,
+      message: req.body.status === 'active' ? 'Customer unsuspended' : 'Customer suspended',
+    });
+  }));
 
 router.get(
   '/profile/stats',
@@ -53,9 +71,19 @@ router
 
 router
   .route('/')
+  .post(
+    validateRequest(UserValidation.createUserZodSchema),
+    UserController.createUser,
+  )
   .get(
     auth(USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN),
     UserController.getAllUsers,
   );
+
+router.post(
+  '/create-user',
+  validateRequest(UserValidation.createUserZodSchema),
+  UserController.createUser,
+);
 
 export const UserRoutes = router;

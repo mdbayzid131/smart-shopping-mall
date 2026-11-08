@@ -34,6 +34,12 @@ router.patch(
   OrderController.markPayoutPaid,
 );
 
+router.patch(
+  '/:id/confirm-delivery',
+  auth(USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN),
+  OrderController.confirmDelivery,
+);
+
 router.post(
   '/:id/missed-collection',
   auth(USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN),
@@ -50,6 +56,12 @@ router.post(
 );
 
 router.post('/:id/cancel', auth(USER_ROLES.USER), OrderController.cancelOrder);
+
+router.post(
+  '/:id/confirm-payment',
+  auth(USER_ROLES.USER, USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN),
+  OrderController.confirmPayment,
+);
 
 router.get(
   '/',

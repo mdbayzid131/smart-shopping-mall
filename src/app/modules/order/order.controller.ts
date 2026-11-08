@@ -110,6 +110,21 @@ const markPayoutPaid = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const confirmDelivery = catchAsync(async (req: Request, res: Response) => {
+  const user = req.user as any;
+  const result = await OrderService.confirmDeliveryAndPayout(
+    req.params.id,
+    user.id,
+  );
+
+  sendResponse(res, {
+    success: true,
+    statusCode: StatusCodes.OK,
+    message: 'Delivery confirmed and seller payout released',
+    data: result,
+  });
+});
+
 const reportMissedCollection = catchAsync(
   async (req: Request, res: Response) => {
     const user = req.user as any;
@@ -142,13 +157,27 @@ const cancelOrder = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const confirmPayment = catchAsync(async (req: Request, res: Response) => {
+  const user = req.user as any;
+  const result = await OrderService.confirmPayment(req.params.id, user);
+
+  sendResponse(res, {
+    success: true,
+    statusCode: StatusCodes.OK,
+    message: 'Payment confirmed successfully',
+    data: result,
+  });
+});
+
 export const OrderController = {
   checkoutOrder,
+  confirmPayment,
   getMyOrders,
   getOrderDetails,
   getAllOrdersForAdmin,
   updateOrderStatus,
   updateOrderSchedule,
+  confirmDelivery,
   markPayoutPaid,
   reportMissedCollection,
   cancelOrder,

@@ -34,13 +34,18 @@ const stripeWebhook = catchAsync(async (req: Request, res: Response) => {
       });
       break;
     }
-    case 'payment_intent.payment_failed': {
+    case 'payment_intent.payment_failed':
+    case 'payment_intent.canceled': {
       const paymentIntent = event.data.object as { id: string };
       await OrderService.handlePaymentFailed(paymentIntent.id);
       break;
     }
     default:
       break;
+  }
+
+  if (event.type === 'account.updated') {
+    await ConnectService.accountUpdated(event.data.object.id);
   }
 
   res.status(StatusCodes.OK).json({ received: true });
@@ -57,13 +62,20 @@ const connectStatus = catchAsync(async (req: Request, res: Response) => {
 });
 
 const connectReturn = catchAsync(async (req: Request, res: Response) => {
-  const result = await ConnectService.statusFromState(String(req.query.state ?? ''));
-  res.status(StatusCodes.OK).json({ success: true, data: result });
+  try {
+    await ConnectService.statusFromState(String(req.query.state ?? ''));
+  } catch (_) {}
+  res.redirect('closete://stripe-return');
 });
 
 const connectRefresh = catchAsync(async (req: Request, res: Response) => {
   const result = await ConnectService.refreshFromState(String(req.query.state ?? ''));
   res.redirect(result.url);
+});
+
+const disconnectAccount = catchAsync(async (req: Request, res: Response) => {
+  const result = await ConnectService.disconnectAccount((req.user as JwtPayload).id);
+  res.status(StatusCodes.OK).json({ success: true, data: result });
 });
 
 export const PaymentController = {
@@ -72,4 +84,5 @@ export const PaymentController = {
   connectStatus,
   connectReturn,
   connectRefresh,
+  disconnectAccount,
 };

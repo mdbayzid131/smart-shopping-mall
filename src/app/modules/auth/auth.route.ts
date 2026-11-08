@@ -10,7 +10,24 @@ import {
 import validateRequest from '../../middlewares/validateRequest';
 import { AuthController } from './auth.controller';
 import { AuthValidation } from './auth.validation';
+import { UserController } from '../user/user.controller';
+import { UserValidation } from '../user/user.validation';
 const router = express.Router();
+
+// -------------------- USER Sign Up (Registration with firstName, lastName, email) --------------------
+router.post(
+  '/signup',
+  otpGenerationLimiter,
+  validateRequest(UserValidation.createUserZodSchema),
+  UserController.createUser,
+);
+
+router.post(
+  '/register',
+  otpGenerationLimiter,
+  validateRequest(UserValidation.createUserZodSchema),
+  UserController.createUser,
+);
 
 // -------------------- ADMIN password login (unchanged behavior — email + password for admins only) --------------------
 router.post(

@@ -86,6 +86,7 @@ const userSchema = new Schema<IUser, UserModal>(
     },
     country: {
       type: String,
+      default: 'UAE',
     },
     password: {
       type: String,
@@ -95,7 +96,7 @@ const userSchema = new Schema<IUser, UserModal>(
     },
     image: {
       type: String,
-      default: 'https://i.ibb.co/z5YHLV9/profile.png',
+      default: null,
     },
     avatar: {
       type: String,
@@ -115,9 +116,14 @@ const userSchema = new Schema<IUser, UserModal>(
       default: 'active',
     },
     sellerStrikes: { type: Number, min: 0, default: 0 },
+    failedAuthentications: { type: Number, min: 0, default: 0 },
+    authenticationFailureOrders: { type: [Schema.Types.ObjectId], select: false, default: [] },
     missedCollections: { type: Number, min: 0, default: 0 },
     buyerUnjustifiedRejections: { type: Number, min: 0, default: 0 },
     statusReason: { type: String, maxlength: 500 },
+    statusChangedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    statusChangedAt: Date,
+    sellingStartedAt: Date,
     verified: {
       type: Boolean,
       default: false,
@@ -128,6 +134,7 @@ const userSchema = new Schema<IUser, UserModal>(
       sparse: true,
       select: false,
     },
+    stripePayoutNotifiedAccountId: { type: String, select: false },
     stripeCustomerId: {
       type: String,
       unique: true,

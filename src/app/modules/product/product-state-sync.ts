@@ -5,6 +5,7 @@ import { IProductStatus } from './product.interface';
 export const PRODUCT_LIST_CACHE_PREFIX = 'products:list:';
 export const PRODUCT_DETAIL_CACHE_PREFIX = 'products:detail:';
 export const PRODUCT_STATUS_CHANGED_EVENT = 'product:status-changed';
+export const PRODUCT_DELETED_EVENT = 'product:deleted';
 export const PRODUCT_WISHLIST_COUNT_CHANGED_EVENT =
   'product:wishlist-count-changed';
 
@@ -22,6 +23,15 @@ export const invalidateProductCaches = (productId?: string) => {
 export const invalidateAllProductCaches = () => {
   invalidateProductListCache();
   cache.flushPrefix(PRODUCT_DETAIL_CACHE_PREFIX);
+};
+
+export const publishProductDeleted = (productId: string) => {
+  invalidateProductCaches(productId);
+  socketHelper.emitToAll(PRODUCT_DELETED_EVENT, {
+    productId,
+    status: 'deleted',
+    changedAt: new Date().toISOString(),
+  });
 };
 
 type ProductStatusChange = {

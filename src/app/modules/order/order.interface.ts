@@ -7,10 +7,13 @@ import {
 } from '../../../enums/order';
 
 export type IDeliveryDetails = {
+  name?: string;
   address: string;
   location: string;
+  city?: string;
   phone: string;
-}
+  country?: string;
+};
 
 export type IPickupWindow = {
   start: Date;
@@ -39,6 +42,9 @@ export type IOrder = {
   platformFee: number;
   sellerPayout: number;
   note?: string;
+  activeIssue?: Types.ObjectId;
+  conditionNote?: string;
+  returnStatus?: 'with_seller' | 'awaiting_return';
   pickupWindow?: IPickupWindow;
   estimatedDeliveryAt?: Date;
   deliveryDetails: IDeliveryDetails;

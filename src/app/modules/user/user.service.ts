@@ -14,6 +14,7 @@ import generateOTP from '../../../util/generateOTP';
 import QueryBuilder from '../../builder/QueryBuilder';
 import { IUser } from './user.interface';
 import { User } from './user.model';
+import { ACTIVE_CLOSET_STATUSES, wardrobeStatusStages } from '../product/product-wardrobe.util';
 import { Order } from '../order/order.model';
 import { Product } from '../product/product.model';
 import { NotificationService } from '../notification/notification.service';
@@ -27,6 +28,8 @@ import {
   getFixedTestOtp,
   isFixedTestOtpEmail,
 } from '../../../helpers/fixedTestOtp';
+import { buildLoginOtpDoc, OTP_TTL_MS } from '../auth/auth.service';
+import { logger } from '../../../shared/logger';
 
 const getAllUsersToDB = async (query: Record<string, unknown>) => {
   const userQuery = new QueryBuilder(User.find(), query)
@@ -67,21 +70,52 @@ const toUserProfile = (user: unknown) => {
   delete value.__v;
 
   let location = typeof value.location === 'string' ? value.location : null;
-  let country = typeof value.country === 'string' ? value.country : null;
-  if (!country && location?.includes(',')) {
+  let country =
+    typeof value.country === 'string' && value.country.trim()
+      ? value.country.trim()
+      : 'UAE';
+  if (country === 'UAE' && location?.includes(',')) {
     const locationParts = location.split(',').map(part => part.trim());
-    country = locationParts.pop() || null;
-    location = locationParts.join(', ') || null;
+    if (
+      locationParts.length > 1 &&
+      locationParts[locationParts.length - 1].toUpperCase() === 'UAE'
+    ) {
+      locationParts.pop();
+      location = locationParts.join(', ') || null;
+    }
   }
+
+  const phone =
+    (typeof value.phone === 'string' && value.phone) ||
+    (typeof value.contact === 'string' && value.contact) ||
+    null;
+
+  const rawImage = typeof value.image === 'string' ? value.image.trim() : null;
+  const image =
+    rawImage &&
+    !rawImage.includes('profile.png') &&
+    rawImage !== 'null' &&
+    rawImage !== ''
+      ? rawImage
+      : null;
+  const rawAvatar =
+    typeof value.avatar === 'string' ? value.avatar.trim() : null;
+  const avatar =
+    rawAvatar &&
+    !rawAvatar.includes('profile.png') &&
+    rawAvatar !== 'null' &&
+    rawAvatar !== ''
+      ? rawAvatar
+      : null;
 
   return {
     ...value,
-    phone:
-      (typeof value.phone === 'string' && value.phone) ||
-      (typeof value.contact === 'string' && value.contact) ||
-      null,
-    country,
-    location,
+    image,
+    avatar,
+    phone,
+    contact: phone,
+    country: country || 'UAE',
+    location: location || (typeof value.address === 'string' ? value.address : null),
   };
 };
 
@@ -91,37 +125,76 @@ const createUserToDB = async (payload: CreateUserPayload): Promise<IUser> => {
   const { firstName, lastName, ...userData } = payload;
   delete userData.password;
   userData.role = USER_ROLES.USER;
-  userData.name = [firstName, lastName]
+  userData.country = userData.country || 'UAE';
+  const fullName = [firstName, lastName]
     .filter((part): part is string => Boolean(part))
     .join(' ');
-  const createUser = await User.create(userData);
-  if (!createUser) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, 'Failed to create user');
+  userData.name = fullName;
+
+  const email = userData.email?.toLowerCase().trim();
+  if (!email) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, 'Email is required');
+  }
+  userData.email = email;
+
+  const existingUser = await User.findOne({ email }).select('+loginOtp');
+  let targetUser: IUser;
+
+  if (existingUser) {
+    if (existingUser.verified) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        'User already exists! Please login instead.',
+      );
+    }
+    // If user previously signed up but did not finish OTP verification,
+    // update their details and allow re-trying sign-up with fresh OTP
+    existingUser.name = fullName;
+    existingUser.country = userData.country;
+    targetUser = await existingUser.save();
+  } else {
+    userData.verified = false;
+    targetUser = await User.create(userData);
   }
 
-  //send email
-  const otp = getFixedTestOtp(createUser.email!) ?? generateOTP();
-  const values = {
-    name: createUser.name,
-    otp: otp,
-    email: createUser.email!,
-  };
-  if (!isFixedTestOtpEmail(createUser.email!)) {
-    const createAccountTemplate = emailTemplate.createAccount(values);
-    void emailHelper.sendEmail(createAccountTemplate);
-  }
+  // Generate OTP & build OTP documents
+  const plainOtp = getFixedTestOtp(email) ?? generateOTP();
+  const otpDoc = await buildLoginOtpDoc(plainOtp);
 
-  //save to DB
   const authentication = {
-    oneTimeCode: otp,
-    expireAt: new Date(Date.now() + 3 * 60000),
+    oneTimeCode: plainOtp,
+    expireAt: new Date(Date.now() + OTP_TTL_MS),
   };
-  await User.findOneAndUpdate(
-    { _id: createUser._id },
-    { $set: { authentication } },
-  );
 
-  return createUser;
+  await User.findByIdAndUpdate((targetUser as any)._id, {
+    $set: {
+      authentication,
+      loginOtp: otpDoc,
+    },
+  });
+
+  if (isFixedTestOtpEmail(email)) {
+    logger.warn(`[AUTH] Fixed development OTP issued for sign-up: ${email}`);
+  } else {
+    try {
+      const createAccountTemplate = emailTemplate.createAccount({
+        name: targetUser.name,
+        otp: plainOtp,
+        email: email,
+      });
+      await emailHelper.sendEmail(createAccountTemplate);
+      logger.info(`[AUTH] Sign-up OTP emailed to ${email}`);
+    } catch (err: any) {
+      errorLogger.error(`[AUTH] Failed to send sign-up OTP email to ${email}`, err);
+      const errDetail = err?.message ? ` (${err.message})` : '';
+      throw new ApiError(
+        StatusCodes.INTERNAL_SERVER_ERROR,
+        `Failed to send sign-in code${errDetail}. Please check email configuration.`,
+      );
+    }
+  }
+
+  return targetUser;
 };
 
 const getUserProfileFromDB = async (user: JwtPayload) => {
@@ -140,7 +213,8 @@ const getProfileStatsFromDB = async (userId: string) => {
     throw new ApiError(StatusCodes.NOT_FOUND, 'User profile not found');
   }
 
-  const [totalProductsListed, totalProductsPurchased, earnings] =
+  const completedStatuses = [ORDER_STATUS.DELIVERED, ORDER_STATUS.COMPLETED];
+  const [totalProductsListed, totalProductsPurchased, sales, closet] =
     await Promise.all([
       Product.countDocuments({ seller: userId }),
       Order.countDocuments({
@@ -150,27 +224,38 @@ const getProfileStatsFromDB = async (userId: string) => {
           $nin: [ORDER_STATUS.CANCELLED, ORDER_STATUS.REFUNDED],
         },
       }),
-      Order.aggregate<{ totalEarnings: number }>([
+      Order.aggregate<{ totalEarnings: number; totalProductsSold: number; totalSalesValue: number }>([
         {
           $match: {
             seller: user._id,
-            payoutStatus: PAYOUT_STATUS.PAID,
+            'payment.status': PAYMENT_STATUS.PAID,
+            status: { $nin: [ORDER_STATUS.CANCELLED, ORDER_STATUS.REFUNDED] },
           },
         },
         {
           $group: {
             _id: null,
-            totalEarnings: { $sum: '$sellerPayout' },
+            totalProductsSold: { $sum: { $cond: [{ $in: ['$status', completedStatuses] }, 1, 0] } },
+            totalSalesValue: { $sum: { $cond: [{ $in: ['$status', completedStatuses] }, '$price', 0] } },
+            totalEarnings: { $sum: { $cond: [{ $eq: ['$payoutStatus', PAYOUT_STATUS.PAID] }, '$sellerPayout', 0] } },
           },
         },
-        { $project: { _id: 0, totalEarnings: 1 } },
+      ]),
+      Product.aggregate<{ closetValue: number }>([
+        { $match: { seller: user._id, status: { $in: ACTIVE_CLOSET_STATUSES } } },
+        ...wardrobeStatusStages(),
+        { $match: { _wardrobeStatus: { $in: ACTIVE_CLOSET_STATUSES } } },
+        { $group: { _id: null, closetValue: { $sum: '$price' } } },
       ]),
     ]);
 
   return {
     totalProductsListed,
     totalProductsPurchased,
-    totalEarnings: Number((earnings[0]?.totalEarnings ?? 0).toFixed(2)),
+    totalProductsSold: sales[0]?.totalProductsSold ?? 0,
+    closetValue: Number((closet[0]?.closetValue ?? 0).toFixed(2)),
+    totalSalesValue: Number((sales[0]?.totalSalesValue ?? 0).toFixed(2)),
+    totalEarnings: Number((sales[0]?.totalEarnings ?? 0).toFixed(2)),
     currency: config.stripe.currency.toUpperCase(),
   };
 };
@@ -186,6 +271,15 @@ const updateProfileToDB = async (
       await removeStoredProfileImage(payload.image).catch(() => undefined);
     }
     throw new ApiError(StatusCodes.BAD_REQUEST, "User doesn't exist!");
+  }
+
+  if (payload.phone && !payload.contact) {
+    payload.contact = payload.phone;
+  } else if (payload.contact && !payload.phone) {
+    payload.phone = payload.contact;
+  }
+  if (payload.country === undefined || payload.country === '') {
+    payload.country = isExistUser.country || 'UAE';
   }
 
   let updateDoc;

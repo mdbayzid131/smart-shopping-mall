@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable no-unused-vars */
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { USER_ROLES } from '../../../enums/user';
 
 export type IAuthentication = {
@@ -34,13 +34,19 @@ export type IUser = {
   providerId?: string;
   status: 'active' | 'restricted' | 'suspended' | 'ban';
   sellerStrikes: number;
+  failedAuthentications: number;
+  authenticationFailureOrders: Types.ObjectId[];
   missedCollections: number;
   buyerUnjustifiedRejections: number;
   statusReason?: string;
+  statusChangedBy?: Types.ObjectId;
+  statusChangedAt?: Date;
+  sellingStartedAt?: Date;
   verified: boolean;
   authentication?: IAuthentication;
   loginOtp?: ILoginOtp;
   stripeAccountId?: string;
+  stripePayoutNotifiedAccountId?: string;
   stripeCustomerId?: string;
 };
 

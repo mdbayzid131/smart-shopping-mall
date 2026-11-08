@@ -78,10 +78,20 @@ const fileUploadHandler = () => {
         );
       }
     } else if (file.fieldname === 'doc') {
-      if (file.mimetype === 'application/pdf') {
+      if (
+        file.mimetype === 'application/pdf' ||
+        file.mimetype === 'image/jpeg' ||
+        file.mimetype === 'image/png' ||
+        file.mimetype === 'image/jpg'
+      ) {
         cb(null, true);
       } else {
-        cb(new ApiError(StatusCodes.BAD_REQUEST, 'Only pdf supported'));
+        cb(
+          new ApiError(
+            StatusCodes.BAD_REQUEST,
+            'Only .pdf, .jpeg, .png, .jpg file supported',
+          ),
+        );
       }
     } else {
       cb(new ApiError(StatusCodes.BAD_REQUEST, 'This file is not supported'));

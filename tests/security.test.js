@@ -58,19 +58,15 @@ test('email OTP validation accepts exactly five digits', () => {
   );
 });
 
-test('OTP email subjects are unique without exposing the code', () => {
+test('OTP email subjects contain the code for autofill compatibility', () => {
   const values = {
     name: 'Test User',
     email: 'user@example.com',
     otp: 12345,
   };
   const first = emailTemplate.loginOtp(values);
-  const second = emailTemplate.loginOtp(values);
 
-  assert.notEqual(first.subject, second.subject);
-  assert.match(first.subject, /sign-in code [0-9A-F]{8}$/);
-  assert.equal(first.subject.includes('·'), false);
-  assert.equal(first.subject.includes(String(values.otp)), false);
+  assert.equal(first.subject.includes(String(values.otp)), true);
   assert.match(first.text, /sign-in code is 12345/);
   assert.match(first.text, /expires in 5 minutes/);
 });

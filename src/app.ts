@@ -24,13 +24,24 @@ app.use(Morgan.successHandler);
 app.use(Morgan.errorHandler);
 
 //security headers
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  }),
+);
 
 app.use(
   cors({
     credentials: true,
     origin(origin, callback) {
-      if (!origin || config.cors_origin.includes(origin)) {
+      if (
+        !origin ||
+        config.cors_origin.includes('*') ||
+        config.cors_origin.includes(origin) ||
+        (config.api_public_url && origin === config.api_public_url) ||
+        origin.endsWith('.vercel.app') ||
+        origin.includes('closete')
+      ) {
         callback(null, true);
         return;
       }

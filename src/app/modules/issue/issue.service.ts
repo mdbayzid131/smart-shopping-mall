@@ -102,7 +102,7 @@ const resolveIssue = async (issueId: string, action: Resolution, adminId: string
       issue.retainNote = action === 'dispatch';
     } else if (!completedStep) {
       // Only queue membership changes, not the order's lifecycle or payment.
-      order.statusHistory.push({ status: order.status, note: action === 'retry_collection' ? 'Collection re-attempt arranged' : 'Delivery re-attempt arranged',
+      order.statusHistory.push({ status: order.status, note: action === 'retry_collection' ? 'Collection re-attempt' : 'Delivery re-attempt',
         changedAt: new Date(), changedBy: new Types.ObjectId(adminId) });
       await order.save();
     }
@@ -118,18 +118,32 @@ const resolveIssue = async (issueId: string, action: Resolution, adminId: string
   });
 };
 
-const enrich = (issue: any) => ({
-  ...issue, allowedActions: issueActions(issue.outcome, issue.order?.status, issue.resolved),
-});
+const enrich = (issue: any) => {
+  const seller = issue.seller && typeof issue.seller === 'object'
+    ? issue.seller
+    : null;
+  const safeSeller = seller
+    ? (() => {
+        const { stripeAccountId, ...publicSeller } = seller;
+        return { ...publicSeller, payoutsEnabled: Boolean(stripeAccountId) };
+      })()
+    : issue.seller;
+
+  return {
+    ...issue,
+    seller: safeSeller,
+    allowedActions: issueActions(issue.outcome, issue.order?.status, issue.resolved),
+  };
+};
 const getIssues = async () => {
   const issues = await Issue.find().sort({ createdAt: -1 }).populate('order').populate('product')
-    .populate('seller', 'name email phone contact location').populate('buyer', 'name email phone contact location')
+    .populate('seller', 'name email phone contact location +stripeAccountId').populate('buyer', 'name email phone contact location')
     .populate('admin', 'name').lean();
   return issues.map(enrich);
 };
 const getIssueById = async (id: string) => {
   const issue = await Issue.findById(id).populate('order').populate('product')
-    .populate('seller', 'name email phone contact location').populate('buyer', 'name email phone contact location').lean();
+    .populate('seller', 'name email phone contact location +stripeAccountId').populate('buyer', 'name email phone contact location').lean();
   if (!issue) throw new ApiError(404, 'Issue not found');
   return enrich(issue);
 };

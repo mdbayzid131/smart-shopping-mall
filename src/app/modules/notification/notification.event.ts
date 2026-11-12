@@ -678,7 +678,7 @@ const orderCancellation = async (order: OrderNotificationContext, outcome: ORDER
 const deliveryReattempted = async (order: OrderNotificationContext, issueId: string) =>
   NotificationService.safeCreateNotification({
     recipientId: idOf(order.buyer), type: NOTIFICATION_TYPE.ITEM_DISPATCHED,
-    title: 'Delivery re-attempt arranged', body: `Order ${order.orderNumber} is being dispatched for another delivery attempt.`,
+    title: 'Delivery re-attempt', body: `Order ${order.orderNumber} is being dispatched for another delivery attempt.`,
     eventKey: `issue:${issueId}:retry-delivery`, data: buyerOrderData(order),
   });
 

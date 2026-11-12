@@ -670,9 +670,9 @@ const sellerPayoutConnected = async (userId: string, accountId: string) =>
   });
 
 const orderCancellation = async (order: OrderNotificationContext, outcome: ORDER_OUTCOME) => {
-  const reason = outcome === ORDER_OUTCOME.SELLER_CANCELLED ? 'the seller requested cancellation' : 'the buyer requested cancellation';
+  const cancelledBy = outcome === ORDER_OUTCOME.SELLER_CANCELLED ? 'seller' : 'buyer';
   return notifyOrderParties(order, NOTIFICATION_TYPE.ORDER_CANCELLED, 'Order cancelled',
-    `Order ${order.orderNumber} was cancelled because ${reason}. A full refund has been issued to the buyer with no fee deduction. The item will not be automatically relisted.`,
+    `Order ${order.orderNumber} was cancelled by the ${cancelledBy}. A full refund has been issued.`,
     `order:${idOf(order._id)}:cancelled:${outcome}`);
 };
 const deliveryReattempted = async (order: OrderNotificationContext, issueId: string) =>

@@ -23,16 +23,16 @@ test('profile keeps purchases, completed sales, inventory value and paid earning
   t.mock.method(Order, 'countDocuments', async filter => {
     assert.equal(filter.buyer, id.toString());
     assert.equal(filter['payment.status'], 'paid');
-    assert.deepEqual(filter.status.$nin, ['cancelled', 'refunded']);
+    assert.deepEqual(filter.status.$nin, ['cancelled']);
     return 2;
   });
   t.mock.method(Order, 'aggregate', async pipeline => {
     assert.equal(pipeline[0].$match.seller, id);
     assert.equal(pipeline[0].$match['payment.status'], 'paid');
-    assert.deepEqual(pipeline[0].$match.status.$nin, ['cancelled', 'refunded']);
+    assert.deepEqual(pipeline[0].$match.status.$nin, ['cancelled']);
     const group = pipeline[1].$group;
     // A delivered sale counts even while its seller payout is still pending.
-    assert.deepEqual(group.totalProductsSold.$sum.$cond[0].$in, ['$status', ['delivered', 'completed']]);
+    assert.deepEqual(group.totalProductsSold.$sum.$cond[0].$in, ['$status', ['delivered']]);
     assert.equal(group.totalSalesValue.$sum.$cond[1], '$price');
     assert.deepEqual(group.totalEarnings.$sum.$cond[0].$eq, ['$payoutStatus', 'paid']);
     return [{ totalProductsSold: 1, totalSalesValue: 800, totalEarnings: 0 }];
@@ -40,13 +40,13 @@ test('profile keeps purchases, completed sales, inventory value and paid earning
   t.mock.method(Product, 'aggregate', async pipeline => {
     assert.equal(pipeline[0].$match.seller, id);
     const statuses = ['pending_review', 'live', 'rejected', 'reserved', 'collected',
-      'authenticated', 'dispatched', 'delivered', 'sold', 'available', 'secured', 'under_review'];
+      'authenticated', 'dispatched', 'sold'];
     const records = statuses.map(status => ({ seller: id, status, price: 100 }));
     records.push({ seller: new Types.ObjectId(), status: 'live', price: 999 });
     const included = records.filter(sift(pipeline[0].$match));
     assert.deepEqual(included.map(product => product.status), [
       'pending_review', 'live', 'reserved', 'collected', 'authenticated',
-      'dispatched', 'available', 'secured', 'under_review',
+      'dispatched',
     ]);
     assert.ok(pipeline.some(stage => stage.$lookup?.from === 'orders'));
     const statusStage = pipeline.find(stage => stage.$addFields?._wardrobeStatus);

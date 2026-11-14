@@ -7,9 +7,23 @@ import {
 } from '../../../enums/order';
 import { IOrder } from './order.interface';
 
+// Legacy values remain accepted only so old MongoDB records can be read and
+// normalized while all new writes use ORDER_STATUS.
 const ALL_ORDER_STATUSES = [
-  ...new Set([...Object.values(ORDER_STATUS), 'secured', 'reserved']),
+  ...new Set([
+    ...Object.values(ORDER_STATUS),
+    'secured', 'collection_pending', 'payout_processing',
+    'ready_for_delivery', 'completed', 'refunded',
+  ]),
 ];
+
+const normalizeOrderStatus = (value: string) => {
+  if (value === 'secured' || value === 'collection_pending') return ORDER_STATUS.RESERVED;
+  if (value === 'payout_processing' || value === 'ready_for_delivery') return ORDER_STATUS.VERIFICATION;
+  if (value === 'completed') return ORDER_STATUS.DELIVERED;
+  if (value === 'refunded') return ORDER_STATUS.CANCELLED;
+  return value;
+};
 
 const orderSchema = new Schema<IOrder>(
   {
@@ -61,7 +75,7 @@ const orderSchema = new Schema<IOrder>(
       type: String,
       enum: ALL_ORDER_STATUSES,
       default: ORDER_STATUS.PENDING_PAYMENT,
-      set: (v: string) => (v === 'secured' ? ORDER_STATUS.RESERVED : v),
+      set: normalizeOrderStatus,
     },
     statusHistory: [
       {
@@ -69,7 +83,7 @@ const orderSchema = new Schema<IOrder>(
           type: String,
           enum: ALL_ORDER_STATUSES,
           required: true,
-          set: (v: string) => (v === 'secured' ? ORDER_STATUS.RESERVED : v),
+          set: normalizeOrderStatus,
         },
         note: { type: String },
         changedAt: { type: Date, default: Date.now },
@@ -81,14 +95,10 @@ const orderSchema = new Schema<IOrder>(
 );
 
 orderSchema.pre('validate', function (next) {
-  if ((this.status as any) === 'secured') {
-    this.status = ORDER_STATUS.RESERVED;
-  }
+  this.status = normalizeOrderStatus(this.status as any) as ORDER_STATUS;
   if (Array.isArray(this.statusHistory)) {
     this.statusHistory.forEach((h: any) => {
-      if (h && h.status === 'secured') {
-        h.status = ORDER_STATUS.RESERVED;
-      }
+      if (h) h.status = normalizeOrderStatus(h.status);
     });
   }
   next();

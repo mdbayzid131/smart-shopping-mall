@@ -5,16 +5,11 @@ import { ORDER_STATUS_TRANSITIONS } from './order.constant';
 
 const STATUS_RANK: Record<ORDER_STATUS, number> = {
   [ORDER_STATUS.PENDING_PAYMENT]: 0,
-  [ORDER_STATUS.SECURED]: 1,
-  [ORDER_STATUS.COLLECTION_PENDING]: 1,
+  [ORDER_STATUS.RESERVED]: 1,
   [ORDER_STATUS.COLLECTED]: 2,
   [ORDER_STATUS.VERIFICATION]: 3,
-  [ORDER_STATUS.PAYOUT_PROCESSING]: 3,
-  [ORDER_STATUS.READY_FOR_DELIVERY]: 3,
   [ORDER_STATUS.DISPATCHED]: 4,
   [ORDER_STATUS.DELIVERED]: 5,
-  [ORDER_STATUS.COMPLETED]: 5,
-  [ORDER_STATUS.REFUNDED]: -1,
   [ORDER_STATUS.CANCELLED]: -1,
 };
 
@@ -26,13 +21,9 @@ const CURRENT_PROGRESS: Record<
     label: 'Awaiting payment',
     description: 'Payment confirmation is pending',
   },
-  [ORDER_STATUS.SECURED]: {
+  [ORDER_STATUS.RESERVED]: {
     label: 'Reserved',
     description: 'Payment is secured and pickup is being arranged',
-  },
-  [ORDER_STATUS.COLLECTION_PENDING]: {
-    label: 'Pickup pending',
-    description: 'The item is awaiting collection from the seller',
   },
   [ORDER_STATUS.COLLECTED]: {
     label: 'Collected',
@@ -42,14 +33,6 @@ const CURRENT_PROGRESS: Record<
     label: 'Verification',
     description: 'Authentication is in progress',
   },
-  [ORDER_STATUS.PAYOUT_PROCESSING]: {
-    label: 'Verified',
-    description: 'Authentication passed and seller payout is processing',
-  },
-  [ORDER_STATUS.READY_FOR_DELIVERY]: {
-    label: 'Ready for delivery',
-    description: 'The verified item is ready to be delivered',
-  },
   [ORDER_STATUS.DISPATCHED]: {
     label: 'Dispatched',
     description: 'The item has been dispatched and is in transit to buyer',
@@ -57,14 +40,6 @@ const CURRENT_PROGRESS: Record<
   [ORDER_STATUS.DELIVERED]: {
     label: 'Delivered',
     description: 'The item was delivered to the buyer',
-  },
-  [ORDER_STATUS.COMPLETED]: {
-    label: 'Completed',
-    description: 'The order is complete',
-  },
-  [ORDER_STATUS.REFUNDED]: {
-    label: 'Refunded',
-    description: 'The payment was refunded',
   },
   [ORDER_STATUS.CANCELLED]: {
     label: 'Cancelled',
@@ -80,16 +55,13 @@ const idOf = (value: any) =>
 
 const currentStepFor = (status: ORDER_STATUS) => {
   if (
-    status === ORDER_STATUS.SECURED ||
-    status === ORDER_STATUS.COLLECTION_PENDING
+    status === ORDER_STATUS.RESERVED
   ) {
     return 'reserved';
   }
   if (status === ORDER_STATUS.COLLECTED) return 'collected';
   if (
-    status === ORDER_STATUS.VERIFICATION ||
-    status === ORDER_STATUS.PAYOUT_PROCESSING ||
-    status === ORDER_STATUS.READY_FOR_DELIVERY
+    status === ORDER_STATUS.VERIFICATION
   ) {
     return 'authenticated';
   }
@@ -97,8 +69,7 @@ const currentStepFor = (status: ORDER_STATUS) => {
     return 'dispatched';
   }
   if (
-    status === ORDER_STATUS.DELIVERED ||
-    status === ORDER_STATUS.COMPLETED
+    status === ORDER_STATUS.DELIVERED
   ) {
     return 'delivered';
   }
@@ -113,8 +84,7 @@ export const getOrderProgress = (
     STATUS_RANK[status] ?? -1,
     ...statusHistory.map(item => STATUS_RANK[item.status] ?? -1),
   );
-  const isCancelledOrRefunded =
-    status === ORDER_STATUS.CANCELLED || status === ORDER_STATUS.REFUNDED;
+  const isCancelledOrRefunded = status === ORDER_STATUS.CANCELLED;
 
   const currentStep = currentStepFor(status);
   const steps = [
@@ -160,11 +130,7 @@ export const getVerificationState = (
     return { status: 'failed', label: 'Verification failed', isVerified: false };
   }
   if (
-    wasVerified ||
-    status === ORDER_STATUS.PAYOUT_PROCESSING ||
-    status === ORDER_STATUS.READY_FOR_DELIVERY ||
-    status === ORDER_STATUS.DELIVERED ||
-    status === ORDER_STATUS.COMPLETED
+    wasVerified || status === ORDER_STATUS.DELIVERED
   ) {
     return { status: 'verified', label: 'Verified', isVerified: true };
   }
@@ -180,18 +146,11 @@ export const getVerificationState = (
 
 export const getDeliveryState = (status: ORDER_STATUS) => {
   if (
-    status === ORDER_STATUS.DELIVERED ||
-    status === ORDER_STATUS.COMPLETED
+    status === ORDER_STATUS.DELIVERED
   ) {
     return { status: 'delivered', label: 'Delivered' };
   }
-  if (status === ORDER_STATUS.READY_FOR_DELIVERY) {
-    return { status: 'ready_for_delivery', label: 'Ready for delivery' };
-  }
-  if (
-    status === ORDER_STATUS.CANCELLED ||
-    status === ORDER_STATUS.REFUNDED
-  ) {
+  if (status === ORDER_STATUS.CANCELLED) {
     return { status: 'not_applicable', label: 'Delivery cancelled' };
   }
   return { status: 'pending', label: 'Delivery pending' };
@@ -238,10 +197,14 @@ export const buildOrderDetails = ({
   const product = toPlain(value.product) ?? {};
   const deliveryDetails = value.deliveryDetails ?? {};
   const rawStatus = value.status;
-  const status = rawStatus === 'secured' ? 'reserved' : rawStatus;
+  const status = ['secured', 'collection_pending'].includes(rawStatus)
+    ? 'reserved'
+    : rawStatus;
   const statusHistory = Array.isArray(value.statusHistory)
     ? value.statusHistory.map((h: any) => ({
-        status: h.status === 'secured' ? 'reserved' : h.status,
+        status: ['secured', 'collection_pending'].includes(h.status)
+          ? 'reserved'
+          : h.status,
         note: h.note || null,
         changedAt: h.changedAt,
       }))

@@ -19,11 +19,10 @@ test('buyer and seller histories exclude abandoned wallets but retain genuine ca
     { id: 'paid', status: 'reserved', payment: { status: 'paid' } },
     { id: 'delivered', status: 'delivered', payment: { status: 'paid' } },
     { id: 'cancelled-after-payment', status: 'cancelled', payment: { status: 'refunded' } },
-    { id: 'refunded', status: 'refunded', payment: { status: 'refunded' } },
   ].map(row => ({ ...row, buyer: 'buyer-1', seller: 'seller-1' }));
   for (const scope of [{ buyer: 'buyer-1' }, { seller: 'seller-1' }]) {
     assert.deepEqual(rows.filter(sift(buildConfirmedOrderFilter(scope))).map(row => row.id),
-      ['paid', 'delivered', 'cancelled-after-payment', 'refunded']);
+      ['paid', 'delivered', 'cancelled-after-payment']);
   }
   assert.deepEqual(rows.filter(sift(buildConfirmedOrderFilter({ buyer: 'someone-else' }))), []);
 });
@@ -67,7 +66,7 @@ test('paid cancellations still refund the buyer and notify the order parties', a
   await OrderService.cancelOrder(order._id.toString(), buyer.toString());
   assert.equal(refund.mock.callCount(), 1);
   assert.equal(order.payment.status, 'refunded');
-  assert.equal(order.status, 'refunded');
+  assert.equal(order.status, 'cancelled');
   assert.equal(notify.mock.callCount(), 1);
 });
 
@@ -95,8 +94,8 @@ test('buyer and seller histories paginate active, delivered, then refunded', asy
     const match = pipeline[0].$match;
     const skip = pipeline.find(stage => stage.$skip)?.$skip ?? 0;
     const limit = pipeline.find(stage => stage.$limit)?.$limit ?? 20;
-    const priority = row => row.payment.status === 'refunded' || ['refunded', 'cancelled'].includes(row.status)
-      ? 2 : ['delivered', 'completed'].includes(row.status) ? 1 : 0;
+    const priority = row => row.payment.status === 'refunded' || row.status === 'cancelled'
+      ? 2 : row.status === 'delivered' ? 1 : 0;
     return rows.filter(sift(match)).sort((a, b) => priority(a) - priority(b))
       .slice(skip, skip + limit).map(row => ({ _id: row._id }));
   });

@@ -68,14 +68,14 @@ for (const [status, type, outcome, action] of [
 });
 
 for (const outcome of ['buyer_cancelled', 'seller_cancelled']) {
-  for (const status of ['reserved', 'collected', 'verification']) test(`${outcome} from ${status} refunds fully and never relists`, async t => {
+  for (const status of ['reserved', 'collected', 'verification']) test(`${outcome} from ${status} cancels and refunds fully`, async t => {
     const f = fixture(t, status);
     await f.report('cancellation', outcome);
-    assert.equal(f.order.status, 'refunded');
+    assert.equal(f.order.status, 'cancelled');
     assert.equal(f.refunds.length, 1);
     assert.equal(f.refunds[0][2], 2500);
     assert.equal(f.order.handlingFeeCharged, 0);
-    assert.equal(f.products[0].$set.status, 'rejected');
+    assert.equal(f.products[0].$set.status, 'live');
     assert.equal(f.order.returnStatus, status === 'reserved' ? 'with_seller' : 'awaiting_return');
     assert.equal(f.issue.resolved, true);
     assert.deepEqual(f.penalties, []);
@@ -92,18 +92,15 @@ test('failed authentication refunds, delists, records exactly one order offence 
   assert.deepEqual(f.events.map(e => e.name), ['authenticationFailed']);
 });
 
-for (const action of ['dispatch', 'cancel_order']) test(`condition mismatch waits for manual ${action}`, async t => {
+test('condition mismatch cancels and refunds immediately', async t => {
   const f = fixture(t, 'collected');
   await f.report('condition_differs', 'condition_differs');
-  assert.equal(f.refunds.length, 0);
+  assert.equal(f.refunds.length, 1);
   assert.equal(f.order.conditionNote, 'Admin supplied reason');
-  await f.resolve(action);
-  await f.resolve(action); // replay must not refund twice
-  assert.equal(f.refunds.length, action === 'cancel_order' ? 1 : 0);
-  assert.equal(f.order.status, action === 'dispatch' ? 'dispatched' : 'refunded');
+  assert.equal(f.order.status, 'cancelled');
+  assert.equal(f.products[0].$set.status, 'rejected');
   assert.equal(f.order.conditionNote, 'Admin supplied reason');
-  assert.equal(f.events.filter(e => e.name === 'issueResolved').length, 0);
-  assert.equal(f.events.filter(e => e.name === 'orderStatusChanged').length, action === 'dispatch' ? 1 : 0);
+  assert.equal(f.issue.resolved, true);
 });
 
 test('buyer changes mind at doorstep: refund without relisting or seller offence', async t => {
@@ -111,14 +108,14 @@ test('buyer changes mind at doorstep: refund without relisting or seller offence
   await f.report('buyer_refused', 'buyer_changed_mind');
   assert.equal(f.refunds[0][2], 2500);
   assert.equal(f.order.returnStatus, 'awaiting_return');
-  assert.equal(f.products[0].$set.status, 'rejected');
+  assert.equal(f.products[0].$set.status, 'live');
   assert.deepEqual(f.penalties, []);
 });
 
 test('stage guards reject wrong reasons, refunded retries and Delivered mutations', async t => {
   assert.throws(() => assertIssueStage('verification', 'authentication_failed'));
   assert.throws(() => assertIssueStage('collected', 'buyer_unavailable'));
-  assert.deepEqual(issueActions('buyer_unavailable', 'refunded', false), []);
+  assert.deepEqual(issueActions('buyer_unavailable', 'cancelled', false), []);
   assert.deepEqual(issueActions('seller_unavailable', 'collected', false), []);
   assert.deepEqual(issueActions('buyer_unavailable', 'reserved', false), []);
   assert.deepEqual(ORDER_STATUS_TRANSITIONS.delivered, []);

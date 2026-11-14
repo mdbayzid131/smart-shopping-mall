@@ -2,16 +2,10 @@
 export enum ORDER_STATUS {
   PENDING_PAYMENT = 'pending_payment',
   RESERVED = 'reserved',
-  SECURED = 'reserved',
-  COLLECTION_PENDING = 'collection_pending',
   COLLECTED = 'collected',
   VERIFICATION = 'verification',
-  PAYOUT_PROCESSING = 'payout_processing',
-  READY_FOR_DELIVERY = 'ready_for_delivery',
   DISPATCHED = 'dispatched',
   DELIVERED = 'delivered',
-  COMPLETED = 'completed',
-  REFUNDED = 'refunded',
   CANCELLED = 'cancelled',
 }
 

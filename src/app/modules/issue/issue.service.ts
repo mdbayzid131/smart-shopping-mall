@@ -27,7 +27,7 @@ const createIssue = async (
     if (!order) throw new ApiError(404, 'Order not found');
     const existing = await Issue.findOne({ order: order._id, resolved: false });
     if (existing && existing.outcome !== outcome) throw new ApiError(409, 'Resolve the existing issue first.');
-    if (existing && order.status === ORDER_STATUS.REFUNDED && order.payment.status === PAYMENT_STATUS.REFUNDED && order.outcome === outcome) {
+    if (existing && order.status === ORDER_STATUS.CANCELLED && order.payment.status === PAYMENT_STATUS.REFUNDED && order.outcome === outcome) {
       if ([ORDER_OUTCOME.AUTHENTICATION_FAILED, ORDER_OUTCOME.COUNTERFEIT].includes(outcome)) {
         const { UserPenaltyService } = await import('../user/user-penalty.service');
         await UserPenaltyService.recordSellerOffence(idOf(order.seller), outcome, idOf(order._id));
@@ -63,7 +63,7 @@ const createIssue = async (
       return issue;
     }
     order = await OrderService.updateOrderStatusWithinWorkflow(
-      idOf(order._id), ORDER_STATUS.REFUNDED, effectiveReason, adminId, outcome, false,
+      idOf(order._id), ORDER_STATUS.CANCELLED, effectiveReason, adminId, outcome, false,
     );
     issue.resolved = true;
     issue.resolvedAt = new Date();
@@ -88,19 +88,16 @@ const resolveIssue = async (issueId: string, action: Resolution, adminId: string
       if (action === 'retry_delivery') await NotificationEvent.deliveryReattempted(order, issueId);
       return issue;
     }
-    const completedStep = !issue.resolved && issue.outcome === ORDER_OUTCOME.CONDITION_DIFFERS &&
-      ((action === 'dispatch' && order.status === ORDER_STATUS.DISPATCHED) ||
-      (action === 'cancel_order' && order.status === ORDER_STATUS.REFUNDED && order.outcome === ORDER_OUTCOME.CONDITION_DIFFERS));
-    if (!completedStep && !issueActions(issue.outcome, order.status, issue.resolved).includes(action)) {
+    if (!issueActions(issue.outcome, order.status, issue.resolved).includes(action)) {
       throw new ApiError(400, 'This action is not available for this issue/order. Refunded orders cannot be retried.');
     }
-    if (!completedStep && order.payment.status !== PAYMENT_STATUS.PAID) throw new ApiError(400, 'The original payment must remain paid for this action.');
-    if (!completedStep && (action === 'cancel_order' || action === 'dispatch')) {
+    if (order.payment.status !== PAYMENT_STATUS.PAID) throw new ApiError(400, 'The original payment must remain paid for this action.');
+    if (action === 'cancel_order' || action === 'dispatch') {
       await OrderService.updateOrderStatusWithinWorkflow(idOf(order._id),
-        action === 'cancel_order' ? ORDER_STATUS.REFUNDED : ORDER_STATUS.DISPATCHED,
+        action === 'cancel_order' ? ORDER_STATUS.CANCELLED : ORDER_STATUS.DISPATCHED,
         issue.reason, adminId, action === 'cancel_order' ? ORDER_OUTCOME.CONDITION_DIFFERS : undefined, false);
       issue.retainNote = action === 'dispatch';
-    } else if (!completedStep) {
+    } else {
       // Only queue membership changes, not the order's lifecycle or payment.
       order.statusHistory.push({ status: order.status, note: action === 'retry_collection' ? 'Collection re-attempt' : 'Delivery re-attempt',
         changedAt: new Date(), changedBy: new Types.ObjectId(adminId) });

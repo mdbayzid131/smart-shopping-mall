@@ -43,11 +43,7 @@ const updateProductZodSchema = z.object({
         'collected',
         'authenticated',
         'dispatched',
-        'delivered',
         'sold',
-        'available',
-        'secured',
-        'under_review',
       ])
       .optional(),
   }),

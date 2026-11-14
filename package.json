@@ -7,6 +7,7 @@
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
+    "migrate:canonical-statuses": "node scripts/migrateCanonicalStatuses.js",
     "start": "node dist/server.js",
     "lint:check": "eslint --ignore-path .eslintignore --ext .ts src",
     "lint:fix": "eslint --ignore-path .eslintignore --ext .ts src --fix",

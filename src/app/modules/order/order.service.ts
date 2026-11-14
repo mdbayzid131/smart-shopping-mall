@@ -263,8 +263,8 @@ const checkoutOrder = async (
     throw new ApiError(StatusCodes.CONFLICT, 'This item is being purchased');
   }
 
-  // 3. If product is neither live nor available
-  if (product.status !== 'live' && product.status !== 'available') {
+  // 3. Only live listings can start a new order.
+  if (product.status !== 'live') {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
       'This item is no longer available',
@@ -282,7 +282,7 @@ const checkoutOrder = async (
     Product.findOneAndUpdate(
       {
         _id: product._id,
-        status: { $in: ['live', 'available'] },
+        status: 'live',
       },
       {
         $set: {
@@ -404,7 +404,7 @@ const handlePaymentSucceeded = async (payment: SuccessfulPayment) => {
     await Order.findByIdAndUpdate(expectedOrder._id, {
       $set: {
         'payment.status': PAYMENT_STATUS.REFUNDED,
-        status: ORDER_STATUS.REFUNDED,
+        status: ORDER_STATUS.CANCELLED,
       },
     });
     await synchronizeProductStatusMutation(
@@ -419,7 +419,7 @@ const handlePaymentSucceeded = async (payment: SuccessfulPayment) => {
     );
     void NotificationEvent.orderStatusChanged(
       expectedOrder,
-      ORDER_STATUS.REFUNDED,
+      ORDER_STATUS.CANCELLED,
     );
     void NotificationEvent.wishlistAvailabilityChanged(
       expectedOrder.product.toString(),
@@ -438,11 +438,11 @@ const handlePaymentSucceeded = async (payment: SuccessfulPayment) => {
     {
       $set: {
         'payment.status': PAYMENT_STATUS.PAID,
-        status: ORDER_STATUS.SECURED,
+        status: ORDER_STATUS.RESERVED,
       },
       $push: {
         statusHistory: {
-          status: ORDER_STATUS.SECURED,
+          status: ORDER_STATUS.RESERVED,
           changedAt: new Date(),
         },
       },
@@ -452,7 +452,7 @@ const handlePaymentSucceeded = async (payment: SuccessfulPayment) => {
   if (!order) {
     const staleOrder = await Order.findOne({
       'payment.paymentIntentId': paymentIntentId,
-      status: { $in: [ORDER_STATUS.CANCELLED, ORDER_STATUS.REFUNDED] },
+      status: { $in: [ORDER_STATUS.CANCELLED] },
     });
     if (staleOrder) {
       await createRefund(
@@ -462,16 +462,16 @@ const handlePaymentSucceeded = async (payment: SuccessfulPayment) => {
       const refundedOrder = await Order.findOneAndUpdate(
         {
           _id: staleOrder._id,
-          status: { $in: [ORDER_STATUS.CANCELLED, ORDER_STATUS.REFUNDED] },
+          status: { $in: [ORDER_STATUS.CANCELLED] },
         },
         {
           $set: {
             'payment.status': PAYMENT_STATUS.REFUNDED,
-            status: ORDER_STATUS.REFUNDED,
+            status: ORDER_STATUS.CANCELLED,
           },
           $push: {
             statusHistory: {
-              status: ORDER_STATUS.REFUNDED,
+              status: ORDER_STATUS.CANCELLED,
               note: 'Late payment was automatically refunded',
               changedAt: new Date(),
             },
@@ -482,7 +482,7 @@ const handlePaymentSucceeded = async (payment: SuccessfulPayment) => {
       if (refundedOrder) {
         void NotificationEvent.orderStatusChanged(
           refundedOrder,
-          ORDER_STATUS.REFUNDED,
+          ORDER_STATUS.CANCELLED,
         );
       }
     }
@@ -763,9 +763,7 @@ const updateOrderSchedule = async (
   }
   if (
     order.status === ORDER_STATUS.CANCELLED ||
-    order.status === ORDER_STATUS.REFUNDED ||
-    order.status === ORDER_STATUS.DELIVERED ||
-    order.status === ORDER_STATUS.COMPLETED
+    order.status === ORDER_STATUS.DELIVERED
   ) {
     throw new ApiError(
       StatusCodes.CONFLICT,
@@ -839,7 +837,9 @@ const getAllOrdersForAdmin = async (query: Record<string, unknown>) => {
   const filterQuery: Record<string, unknown> = { ...query };
   if (!filterQuery.status) {
     filterQuery.status = {
-      $nin: [ORDER_STATUS.PENDING_PAYMENT, ORDER_STATUS.CANCELLED, ORDER_STATUS.REFUNDED],
+      // Admin order history includes cancelled orders; only abandoned unpaid
+      // payment attempts stay out of the dashboard.
+      $nin: [ORDER_STATUS.PENDING_PAYMENT],
     };
   }
 
@@ -874,7 +874,7 @@ const resolvePolicyOutcome = (
   targetStatus: ORDER_STATUS,
   requestedOutcome?: ORDER_OUTCOME,
 ) => {
-  if (targetStatus !== ORDER_STATUS.REFUNDED) {
+  if (targetStatus !== ORDER_STATUS.CANCELLED) {
     return undefined;
   }
 
@@ -889,10 +889,7 @@ const resolvePolicyOutcome = (
     return ORDER_OUTCOME.AUTHENTICATION_FAILED;
   }
 
-  if (
-    currentStatus === ORDER_STATUS.READY_FOR_DELIVERY ||
-    currentStatus === ORDER_STATUS.DISPATCHED
-  ) {
+  if (currentStatus === ORDER_STATUS.DISPATCHED) {
     return ORDER_OUTCOME.BUYER_CHANGED_MIND;
   }
 
@@ -994,7 +991,10 @@ const updateOrderStatusWithinWorkflow = async (
 
 
   if (outcome) {
-    order.returnStatus = [ORDER_STATUS.RESERVED, ORDER_STATUS.COLLECTION_PENDING].includes(order.status)
+    if (outcome === ORDER_OUTCOME.CONDITION_DIFFERS) {
+      order.conditionNote = note;
+    }
+    order.returnStatus = [ORDER_STATUS.RESERVED].includes(order.status)
       ? 'with_seller' : 'awaiting_return';
     await refundOrderPayment(
       order,
@@ -1009,12 +1009,18 @@ const updateOrderStatusWithinWorkflow = async (
     ) {
       order.returnShippingPayer = 'seller';
     }
+    const rejectProduct = [
+      ORDER_OUTCOME.AUTHENTICATION_FAILED,
+      ORDER_OUTCOME.COUNTERFEIT,
+      ORDER_OUTCOME.NOT_AS_DESCRIBED,
+      ORDER_OUTCOME.CONDITION_DIFFERS,
+    ].includes(outcome);
     await synchronizeProductStatusMutation(
       Product.findByIdAndUpdate(order.product, {
-        $set: { status: 'rejected' },
-        $unset: { reservationExpiresAt: 1 },
+        $set: { status: rejectProduct ? 'rejected' : 'live' },
+        $unset: { buyer: 1, reservationExpiresAt: 1 },
       }),
-      { productId: order.product.toString(), status: 'rejected' },
+      { productId: order.product.toString(), status: rejectProduct ? 'rejected' : 'live' },
     );
   } else if (REFUND_TRIGGER_STATUSES.includes(targetStatus)) {
     if (order.payment.status === PAYMENT_STATUS.PAID) {
@@ -1026,15 +1032,14 @@ const updateOrderStatusWithinWorkflow = async (
     }
     await synchronizeProductStatusMutation(
       Product.findByIdAndUpdate(order.product, {
-        $set: { status: 'rejected' },
+        $set: { status: 'live' },
         $unset: { buyer: 1, reservationExpiresAt: 1 },
       }),
-      { productId: order.product.toString(), status: 'rejected' },
+      { productId: order.product.toString(), status: 'live' },
     );
   }
 
   if (
-    targetStatus === ORDER_STATUS.COMPLETED ||
     targetStatus === ORDER_STATUS.DELIVERED
   ) {
     await synchronizeProductStatusMutation(
@@ -1143,7 +1148,7 @@ const confirmDeliveryAndPayout = async (orderId: string, adminId: string) =>
     }
 
     if (
-      ![ORDER_STATUS.DISPATCHED, ORDER_STATUS.READY_FOR_DELIVERY].includes(
+      ![ORDER_STATUS.DISPATCHED].includes(
         order.status,
       )
     ) {
@@ -1228,7 +1233,7 @@ const confirmDeliveryAndPayout = async (orderId: string, adminId: string) =>
 
 const paySeller = async (order: InstanceType<typeof Order>) => {
   if (order.payoutStatus === PAYOUT_STATUS.PAID) return order;
-  if (order.status !== ORDER_STATUS.PAYOUT_PROCESSING) {
+  if (order.status !== ORDER_STATUS.VERIFICATION) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
       'Seller payout is only available after authentication passes',
@@ -1341,7 +1346,7 @@ const cancelOrder = async (orderIdOrProductId: string, buyerId: string) => {
   }
 
   if (
-    order.status !== ORDER_STATUS.SECURED &&
+    order.status !== ORDER_STATUS.RESERVED &&
     order.status !== ORDER_STATUS.PENDING_PAYMENT
   ) {
     throw new ApiError(
@@ -1394,7 +1399,7 @@ const cancelOrder = async (orderIdOrProductId: string, buyerId: string) => {
   return withOrderWorkflowLock(order._id.toString(), async () => {
     const active = await Issue.exists({ order: order._id, resolved: false });
     if (active) throw new ApiError(409, 'Please contact support to cancel an order with an open issue.');
-    return updateOrderStatusWithinWorkflow(order._id.toString(), ORDER_STATUS.REFUNDED,
+    return updateOrderStatusWithinWorkflow(order._id.toString(), ORDER_STATUS.CANCELLED,
       'Buyer requested cancellation before collection', buyerId, ORDER_OUTCOME.BUYER_CANCELLED, false);
   });
 };

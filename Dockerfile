@@ -5,6 +5,7 @@ COPY package*.json ./
 RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
+COPY scripts ./scripts
 RUN npm run build && npm prune --omit=dev
 
 FROM node:22-alpine
@@ -13,6 +14,7 @@ WORKDIR /app
 RUN addgroup -S app && adduser -S app -G app
 COPY --from=build --chown=app:app /app/node_modules ./node_modules
 COPY --from=build --chown=app:app /app/dist ./dist
+COPY --from=build --chown=app:app /app/scripts ./scripts
 COPY --chown=app:app package.json ./
 RUN mkdir -p uploads winston && chown -R app:app uploads winston
 USER app

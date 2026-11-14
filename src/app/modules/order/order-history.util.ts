@@ -29,7 +29,7 @@ export const orderHistorySortStages = (
                     {
                       $in: [
                         '$status',
-                        [ORDER_STATUS.REFUNDED, ORDER_STATUS.CANCELLED],
+                        [ORDER_STATUS.CANCELLED],
                       ],
                     },
                   ],
@@ -40,7 +40,7 @@ export const orderHistorySortStages = (
                 case: {
                   $in: [
                     '$status',
-                    [ORDER_STATUS.DELIVERED, ORDER_STATUS.COMPLETED],
+                    [ORDER_STATUS.DELIVERED],
                   ],
                 },
                 then: 1,

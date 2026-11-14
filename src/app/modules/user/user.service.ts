@@ -213,7 +213,7 @@ const getProfileStatsFromDB = async (userId: string) => {
     throw new ApiError(StatusCodes.NOT_FOUND, 'User profile not found');
   }
 
-  const completedStatuses = [ORDER_STATUS.DELIVERED, ORDER_STATUS.COMPLETED];
+  const completedStatuses = [ORDER_STATUS.DELIVERED];
   const [totalProductsListed, totalProductsPurchased, sales, closet] =
     await Promise.all([
       Product.countDocuments({ seller: userId }),
@@ -221,7 +221,7 @@ const getProfileStatsFromDB = async (userId: string) => {
         buyer: userId,
         'payment.status': PAYMENT_STATUS.PAID,
         status: {
-          $nin: [ORDER_STATUS.CANCELLED, ORDER_STATUS.REFUNDED],
+          $nin: [ORDER_STATUS.CANCELLED],
         },
       }),
       Order.aggregate<{ totalEarnings: number; totalProductsSold: number; totalSalesValue: number }>([
@@ -229,7 +229,7 @@ const getProfileStatsFromDB = async (userId: string) => {
           $match: {
             seller: user._id,
             'payment.status': PAYMENT_STATUS.PAID,
-            status: { $nin: [ORDER_STATUS.CANCELLED, ORDER_STATUS.REFUNDED] },
+            status: { $nin: [ORDER_STATUS.CANCELLED] },
           },
         },
         {

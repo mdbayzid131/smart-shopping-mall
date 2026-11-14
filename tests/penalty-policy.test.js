@@ -43,18 +43,9 @@ test('client cancellation/refund workflow does not deduct an unapproved handling
   }
 });
 
-test('ready-for-delivery orders support a policy refund transition', () => {
+test('a reserved order can be marked collected without a scheduling step', () => {
   assert.equal(
-    ORDER_STATUS_TRANSITIONS[ORDER_STATUS.READY_FOR_DELIVERY].includes(
-      ORDER_STATUS.REFUNDED,
-    ),
-    true,
-  );
-});
-
-test('a secured order can be marked collected without a scheduling step', () => {
-  assert.equal(
-    ORDER_STATUS_TRANSITIONS[ORDER_STATUS.SECURED].includes(
+    ORDER_STATUS_TRANSITIONS[ORDER_STATUS.RESERVED].includes(
       ORDER_STATUS.COLLECTED,
     ),
     true,
@@ -63,14 +54,14 @@ test('a secured order can be marked collected without a scheduling step', () => 
 
 test('a collected order can record an authentication result directly', () => {
   const transitions = ORDER_STATUS_TRANSITIONS[ORDER_STATUS.COLLECTED];
-  assert.equal(transitions.includes(ORDER_STATUS.PAYOUT_PROCESSING), true);
-  assert.equal(transitions.includes(ORDER_STATUS.REFUNDED), true);
+  assert.equal(transitions.includes(ORDER_STATUS.VERIFICATION), true);
+  assert.equal(transitions.includes(ORDER_STATUS.CANCELLED), true);
 });
 
 test('order status validation accepts a typed delivery outcome', () => {
   const parsed = OrderValidation.updateOrderStatusZodSchema.safeParse({
     body: {
-      status: ORDER_STATUS.REFUNDED,
+      status: ORDER_STATUS.CANCELLED,
       outcome: ORDER_OUTCOME.NOT_AS_DESCRIBED,
       note: 'The received item differs from its listing',
     },

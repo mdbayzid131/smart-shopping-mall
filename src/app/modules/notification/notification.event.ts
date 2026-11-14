@@ -15,6 +15,7 @@ type OrderNotificationContext = {
   seller: unknown;
   product: unknown;
   price?: number;
+  payment?: { status?: string };
 };
 
 const idOf = (value: unknown) => {
@@ -346,8 +347,7 @@ const orderStatusChanged = async (
   const key = `order:${idOf(order._id)}:status:${status}`;
 
   if (
-    status === ORDER_STATUS.VERIFICATION ||
-    status === ORDER_STATUS.PAYOUT_PROCESSING
+    status === ORDER_STATUS.VERIFICATION
   ) {
     await authenticationPassed(order);
     return;
@@ -376,8 +376,7 @@ const orderStatusChanged = async (
   }
 
   if (
-    status === ORDER_STATUS.DISPATCHED ||
-    status === ORDER_STATUS.READY_FOR_DELIVERY
+    status === ORDER_STATUS.DISPATCHED
   ) {
     await Promise.all([
       NotificationService.safeCreateNotification({
@@ -422,29 +421,25 @@ const orderStatusChanged = async (
     return;
   }
 
-  if (status === ORDER_STATUS.COMPLETED) {
-    return;
-  }
-
-  if (status === ORDER_STATUS.REFUNDED) {
-    await notifyOrderParties(
-      order,
-      NOTIFICATION_TYPE.PAYMENT_REFUNDED,
-      'Payment refunded',
-      `Payment for order ${order.orderNumber} has been refunded.`,
-      key,
-    );
-    return;
-  }
-
   if (status === ORDER_STATUS.CANCELLED) {
-    await notifyOrderParties(
-      order,
-      NOTIFICATION_TYPE.ORDER_CANCELLED,
-      'Order cancelled',
-      `Order ${order.orderNumber} has been cancelled.`,
-      key,
-    );
+    await Promise.all([
+      notifyOrderParties(
+        order,
+        NOTIFICATION_TYPE.ORDER_CANCELLED,
+        'Order cancelled',
+        `Order ${order.orderNumber} has been cancelled.`,
+        key,
+      ),
+      ...(order.payment?.status === 'refunded'
+        ? [notifyOrderParties(
+            order,
+            NOTIFICATION_TYPE.PAYMENT_REFUNDED,
+            'Payment refunded',
+            `Payment for order ${order.orderNumber} has been refunded.`,
+            `${key}:payment-refunded`,
+          )]
+        : []),
+    ]);
     return;
   }
 };

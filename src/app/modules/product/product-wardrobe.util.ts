@@ -1,9 +1,9 @@
 import { PipelineStage } from 'mongoose';
 
-export const WARDROBE_SOLD_STATUSES = ['sold', 'delivered', 'completed'];
-export const WARDROBE_REFUNDED_STATUSES = ['refunded', 'cancelled'];
+export const WARDROBE_SOLD_STATUSES = ['sold'];
+export const WARDROBE_REFUNDED_STATUSES = ['cancelled', 'refunded'];
 export const ACTIVE_CLOSET_STATUSES = [
-  'pending_review', 'under_review', 'live', 'available', 'reserved', 'secured',
+  'pending_review', 'live', 'reserved',
   'collected', 'authenticated', 'dispatched',
 ];
 

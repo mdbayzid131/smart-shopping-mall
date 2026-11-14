@@ -9,11 +9,7 @@ export type IProductStatus =
   | 'collected'
   | 'authenticated'
   | 'dispatched'
-  | 'delivered'
   | 'sold'
-  | 'available'
-  | 'secured'
-  | 'under_review';
 
 export interface IProduct {
   name: string;

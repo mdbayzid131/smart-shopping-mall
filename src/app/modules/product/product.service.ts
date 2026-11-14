@@ -175,25 +175,22 @@ const getAllProductsFromDB = async (
 ) => {
   const queryWithDefaults: Record<string, unknown> = { ...query };
 
-  // If viewing a specific seller's profile - Only show live/available products
+  // Only live products are available for purchase.
   if (queryWithDefaults.seller) {
     if (!queryWithDefaults.status) {
-      queryWithDefaults.status = { $in: ['live', 'available'] };
+      queryWithDefaults.status = 'live';
     }
   } else {
-    // General feed - Only show items that are live or available for sale to general buyers.
+    // General feed - Only show live items for sale to general buyers.
     if (
       !queryWithDefaults.status ||
-      queryWithDefaults.status === 'available' ||
       queryWithDefaults.status === 'live'
     ) {
-      queryWithDefaults.status = { $in: ['live', 'available'] };
+      queryWithDefaults.status = 'live';
     } else if (Array.isArray(queryWithDefaults.status)) {
       const statusSet = new Set(queryWithDefaults.status as string[]);
-      if (statusSet.has('available') || statusSet.has('live')) {
-        statusSet.add('available');
-        statusSet.add('live');
-        queryWithDefaults.status = { $in: Array.from(statusSet) };
+      if (statusSet.has('live')) {
+        queryWithDefaults.status = { $in: Array.from(statusSet).filter(status => status === 'live') };
       }
     }
   }

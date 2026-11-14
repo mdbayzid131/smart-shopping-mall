@@ -24,17 +24,17 @@ test('order progress exposes stable UI states', () => {
       ['delivered', 'pending'],
     ],
   );
-  assert.deepEqual(getDeliveryState('ready_for_delivery'), {
-    status: 'ready_for_delivery',
-    label: 'Ready for delivery',
+  assert.deepEqual(getDeliveryState('verification'), {
+    status: 'pending',
+    label: 'Delivery pending',
   });
 });
 
 test('verification state distinguishes pending, verified, and failed orders', () => {
   assert.equal(getVerificationState('verification', false).status, 'in_progress');
-  assert.equal(getVerificationState('payout_processing', false).isVerified, true);
-  assert.equal(getVerificationState('refunded', true).status, 'failed');
-  assert.equal(getVerificationState('refunded', false, true).isVerified, true);
+  assert.equal(getVerificationState('delivered', false).isVerified, true);
+  assert.equal(getVerificationState('cancelled', true).status, 'failed');
+  assert.equal(getVerificationState('cancelled', false, true).isVerified, true);
 });
 
 test('order details include the UI contract and redact Stripe identifiers', () => {
@@ -42,7 +42,7 @@ test('order details include the UI contract and redact Stripe identifiers', () =
     order: {
       _id: 'order-1',
       orderNumber: 'CLT-123',
-      status: 'ready_for_delivery',
+      status: 'verification',
       price: 3200,
       platformFee: 384,
       sellerPayout: 2816,

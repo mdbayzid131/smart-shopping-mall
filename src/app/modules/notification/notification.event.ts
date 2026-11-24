@@ -31,6 +31,35 @@ const formatPrice = (amount: number) =>
     maximumFractionDigits: 2,
   }).format(amount);
 
+const ITEM_REJECTION_MESSAGES: Record<string, string> = {
+  'prohibited item':
+    "We've reviewed your listing and unfortunately this item isn't eligible for listing on Closeté.",
+  'poor-quality images':
+    "We've reviewed your listing and unfortunately the photos don't meet Closeté's quality standards.",
+  'poor quality images':
+    "We've reviewed your listing and unfortunately the photos don't meet Closeté's quality standards.",
+  'inaccurate information':
+    "We've reviewed your listing and unfortunately the listing details don't accurately represent the item.",
+};
+
+const getItemRejectionContent = (rawReason: string) => {
+  const separatorIndex = rawReason.indexOf(':');
+  const reasonCode = (separatorIndex >= 0
+    ? rawReason.slice(0, separatorIndex)
+    : rawReason).trim();
+  const adminNote = separatorIndex >= 0
+    ? rawReason.slice(separatorIndex + 1).trim()
+    : '';
+  const message = ITEM_REJECTION_MESSAGES[reasonCode.toLowerCase()]
+    ?? "We've reviewed your listing and unfortunately we're unable to publish it at this time.";
+
+  return {
+    reasonCode,
+    adminNote,
+    body: adminNote ? `${message} Additional note: ${adminNote}` : message,
+  };
+};
+
 const getProductContext = async (productId: string, fallbackPrice = 0) => {
   try {
     const product = await Product.findById(productId).select('name price').lean();
@@ -634,15 +663,24 @@ const itemRejected = async (
   userId: string,
   productId: string,
   rejectionReason: string,
-) =>
-  NotificationService.safeCreateNotification({
+) => {
+  const content = getItemRejectionContent(rejectionReason);
+  return NotificationService.safeCreateNotification({
     recipientId: userId,
     type: NOTIFICATION_TYPE.ITEM_REJECTED,
-    title: 'Your listing couldn’t be published',
-    body: `We’ve reviewed your listing and, unfortunately, we’re unable to publish it at this time. Reason: ${rejectionReason}`,
+    title: 'Item not published',
+    body: content.body,
     eventKey: `product:${productId}:rejected:${Date.now()}`,
-    data: { screen: 'my_listings', productId, status: 'rejected', rejectionReason },
+    data: {
+      screen: 'my_listings',
+      productId,
+      status: 'rejected',
+      rejectionReason,
+      rejectionCode: content.reasonCode,
+      ...(content.adminNote ? { rejectionNote: content.adminNote } : {}),
+    },
   });
+};
 
 const sellerOnboardingRequired = async (userId: string, orderId: string) =>
   NotificationService.safeCreateNotification({
